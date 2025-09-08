@@ -1,5 +1,7 @@
 from typing import Union, Literal
 
+from serialization.utils import add_element_ids
+
 
 def serialize_archimate_cm_template(**kwargs):
     node_type = kwargs.get('element_type')
@@ -37,6 +39,9 @@ def serialize_archimate_nl_template(**kwargs):
 
 
 def serialize_archimate_model(model_node, stype=Union[Literal['cm', 'nl']], level=0, use_structure=True):
+    id_map = dict()
+    add_element_ids(model_node, id_map)
+    model_node['id_map'] = id_map
     serialize_template = serialize_archimate_cm_template if stype == 'cm' else serialize_archimate_nl_template
     
     if 'elements' in model_node and isinstance(model_node['elements'], list):

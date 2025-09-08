@@ -1,0 +1,9 @@
+{
+    "python.analysis.typeCheckingMode": "off",
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportOperatorIssue": "none",
+        "reportOptionalMemberAccess": "none",
+        "reportOptionalOperand": "none",
+        "reportGeneralTypeIssues": "none"
+    }
+}

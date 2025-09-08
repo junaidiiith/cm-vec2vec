@@ -2,12 +2,12 @@ from tqdm.auto import tqdm
 from typing import Union, Literal
 import os
 from .utils import (
+    add_element_ids,
     read_json_file, 
     camel_or_snake_to_title, 
     sanitize_text
 )
 import ast
-import csv
 
 
 def get_all_ontouml_type_properties(node, s):
@@ -263,10 +263,10 @@ def serialize_ontouml_nl_template(**kwargs):
         )
         
 
-def serialize_ontouml_model(model_node: dict, stype=Union[Literal['cm', 'nl']], level=0, use_structure=True):
+def serialize_model(model_node: dict, stype=Union[Literal['cm', 'nl']], level=0, use_structure=True):
     # a node is a dict with type, name, description
     # a node can have contents, properties, literals
-    
+        
     term_name = camel_or_snake_to_title(model_node.get('name', ''))
     
     serialize_template = serialize_ontouml_cm_template if stype == 'cm' else serialize_ontouml_nl_template
@@ -296,7 +296,7 @@ def serialize_ontouml_model(model_node: dict, stype=Union[Literal['cm', 'nl']], 
         nested_terms = list()
         for child in model_node['contents']:
             child['id_map'] = model_node.get('id_map')
-            child_display = serialize_ontouml_model(child, stype=stype, level=level + 1, use_structure=use_structure)
+            child_display = serialize_model(child, stype=stype, level=level + 1, use_structure=use_structure)
             if child_display:
                 nested_terms.append(child_display)
         if nested_terms:
@@ -306,71 +306,12 @@ def serialize_ontouml_model(model_node: dict, stype=Union[Literal['cm', 'nl']], 
     if 'model' in model_node:
         new_model_node = model_node['model']
         new_model_node['id_map'] = model_node.get('id_map')
-        model_display = serialize_ontouml_model(new_model_node, stype=stype, level=level, use_structure=use_structure)
+        model_display = serialize_model(new_model_node, stype=stype, level=level, use_structure=use_structure)
         if model_display:
             term_display += f"\n{model_display}"
     
     return term_display.strip()
     
-        
-def serialize_archimate_cm_template(**kwargs):
-    node_type = kwargs.get('element_type')
-    
-    if node_type in ['Node']:
-        element_type = kwargs.get('type')
-        layer = kwargs.get('layer', '')
-        name = kwargs.get('name', '')
-        return f"An ArchiMate {element_type} element named {name} in the {layer} layer.\n"
-        
-    elif node_type in ['Relationship']:
-        id_map = kwargs.get('id_map')
-        source_node = id_map.get(kwargs.get('sourceId', {})) if id_map and kwargs.get('sourceId') else None
-        target_node = id_map.get(kwargs.get('targetId', {})) if id_map and kwargs.get('targetId') else None
-        relation_type = kwargs.get('type', '')
-        source_node_name = source_node.get('name', '') if source_node else ''
-        target_node_name = target_node.get('name', '') if target_node else ''
-        return f"An ArchiMate {relation_type} relationship from {source_node_name} to {target_node_name}.\n"
-    
-    raise ValueError(f"Archimate CM template serialization for type '{node_type}' not presently implemented.")
-
-def serialize_archimate_nl_template(**kwargs):
-    node_type = kwargs.get('element_type')
-    if node_type in ['Node']:
-        name = kwargs.get('name', '')
-        return f"{name}"
-    elif node_type in ['Relationship']:
-        id_map = kwargs.get('id_map')
-        source_node = id_map.get(kwargs.get('sourceId', {})) if id_map and kwargs.get('sourceId') else None
-        target_node = id_map.get(kwargs.get('targetId', {})) if id_map and kwargs.get('targetId') else None
-        source_node_name = source_node.get('name', '') if source_node else ''
-        target_node_name = target_node.get('name', '') if target_node else ''
-        return f"{source_node_name} is connected to {target_node_name}."
-    raise ValueError(f"Archimate NL template serialization for type '{node_type}' not presently implemented.")
-
-
-def serialize_archimate_model(model_node, stype=Union[Literal['cm', 'nl']], level=0, use_structure=True):
-    serialize_template = serialize_archimate_cm_template if stype == 'cm' else serialize_archimate_nl_template
-    
-    if 'elements' in model_node and isinstance(model_node['elements'], list):
-        elements = list()
-        for elem in model_node['elements']:
-            elem = {**elem, 'element_type': 'Node', 'id_map': model_node.get('id_map')}
-            elem_display = serialize_template(**elem)
-            if elem_display:
-                elements.append(elem_display)
-        elements_text = f"{'\t'*(level+1) if use_structure else ''} Model has the following elements: \n{'\t'*(level+1) if use_structure else ''}" + f"\n{'\t'*(level+1) if use_structure else ''}".join(elements) + "\n"
-
-    
-    if 'relationships' in model_node and isinstance(model_node['relationships'], list):
-        relationships = list()
-        for rel in model_node['relationships']:
-            rel = {**rel, 'element_type': 'Relationship', 'id_map': model_node.get('id_map')}
-            rel_display = serialize_template(**rel)
-            if rel_display:
-                relationships.append(rel_display)
-        relationships_text = f"{'\t'*(level+1) if use_structure else ''} Model has the following relationships: \n{'\t'*(level+1) if use_structure else ''}" + f"\n{'\t'*(level+1) if use_structure else ''}".join(relationships) + "\n"
-
-    return f"{elements_text}\n{relationships_text}".strip()
 
 
 def get_meta_info(model_metadata):
@@ -390,3 +331,9 @@ def get_meta_info(model_metadata):
     return sentence
 
 
+def serialize_ontouml_model(model_node: dict, stype=Union[Literal['cm', 'nl']], level=0, use_structure=True):
+    id_map = dict()
+    add_element_ids(model_node, id_map)
+    model_node['id_map'] = id_map
+    model_display = serialize_model(model_node, stype=stype, level=level, use_structure=use_structure)
+    return model_display
