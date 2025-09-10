@@ -208,3 +208,10 @@ __marimo__/
 
 datasets*
 runs*
+
+vec2vec*
+
+tensorboard_logs*
+
+test_checkpoints*
+test_tensorboard_logs*

@@ -27,6 +27,7 @@ def check_resource_presence(model, resources):
                 
     check_resource_util(model)
 
+
 def get_node_name(**kwargs):
     properties = kwargs.get('properties', {})
     level = kwargs.get('level')
@@ -35,14 +36,12 @@ def get_node_name(**kwargs):
     return f"{name}{description}"
 
 
-def get_node_str(stype, **kwargs):
+def get_node_str(**kwargs):
     level = kwargs.get('level')
     node_name = get_node_name(**kwargs)
-    if stype == 'cm':
-        node_type = kwargs.get('stencil')['id'] if 'stencil' in kwargs else ''
-        node_str = f"{'\t'*(level)}Node: ({node_type}) {node_name}" if node_name else ""
-    else:
-        node_str = f"{'\t'*(level)}Node: {node_name}" if node_name else ""
+    node_type = kwargs.get('stencil') if 'stencil' in kwargs and 'id' in kwargs.get('stencil') else ''
+
+    node_str = f"{'\t'*(level)}Node: ({node_type}) {node_name}" if node_name else ""
     return node_str
     
     
@@ -51,23 +50,24 @@ def get_edges_str(**kwargs):
     level = kwargs.get('level')
     edges = kwargs.get('outgoing', [])
     edges_str= ""
-    edges_content = [get_node_name(level=level, **resource_map[r['resourceId']]) for r in edges]
+    edges_content = [
+        get_node_name(level=level, **resource_map[r['resourceId']]) 
+        for r in edges if r['resourceId'] in resource_map
+    ]
     edges_content = [e for e in edges_content if len(e)]
     if len(edges_content):
         edges_str = f"\n{'\t'*(level)}".join(edges_content)   
     return edges_str
- 
+
 
 def serialize_bpmn_nl_template(**kwargs):
-    level = kwargs.get('level')
-    node_str = get_node_str('nl', **kwargs)
-    edges_str = get_edges_str(**kwargs)
-    return f"{node_str}\n{'\t'*(level)}Connections:\n {edges_str}".strip()
+    node_str = get_node_name(**kwargs)
+    return node_str
 
 
 def serialize_bpmn_cm_template(**kwargs):
     level = kwargs.get('level')
-    node_str = get_node_str('cm', **kwargs)
+    node_str = get_node_str(**kwargs)
     edges_str = get_edges_str(**kwargs)
     return f"{node_str}\n{'\t'*(level)}Connections:\n {edges_str}".strip()
 
@@ -82,8 +82,12 @@ def serialize_model(model, resources, stype, level=0, use_structure=True):
             if child_str:
                 child_data.append(child_str)
     
-    data_str = f"{'\t'*level}{node_data}\n" + f"{'\t'*(level+1)}\n".join(child_data)
+    if stype == 'nl':
+        data_str = f"{node_data}" + f"\n".join(child_data)
+    else:
+        data_str = f"{'\t'*level}{node_data}\n" + f"{'\t'*(level+1)}\n".join(child_data)
     return data_str
+
 
 def serialize_bpmn_model(model, stype=Union[Literal['cm', 'nl']], level=0, use_structure=True):
     resources = get_resources(model)

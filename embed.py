@@ -101,7 +101,7 @@ def process_column(texts, num_jobs=4, chunk_size=8192, encoding_name="cl100k_bas
 def add_embeddings(
     df: pd.DataFrame, embedding_columns, save=True, num_jobs=4, 
     chunk_size=8192, encoding_name="cl100k_base", 
-    aggregator="mean", output_df_name=None
+    aggregator="mean", output_pth=None
 ):
     assert all(ec in df.columns for ec in embedding_columns), f"Some Columns from '{embedding_columns}' not found in DataFrame"
     
@@ -116,5 +116,5 @@ def add_embeddings(
         )
     
     if save:
-        with open(f"datasets/{output_df_name if output_df_name else 'embeddings_df'}.pkl", 'wb') as f:
+        with open(f"{output_pth if output_pth else 'embeddings_df'}.pkl", 'wb') as f:
             pickle.dump(df, f)

@@ -96,7 +96,9 @@ def get_relation_str(kwargs):
         assert source_property_node['propertyType']['id'] in id_map, f"propertyType id not found in id_map for source_property_node {source_property_node}"
         assert target_property_node['propertyType']['id'] in id_map, f"propertyType id not found in id_map for target_property_node {target_property_node}"
     except AssertionError as e:
+        print(f"Error: {e}")
         print(f"Relation Error")
+
         # print(f"Properties: {properties}")
         # print(f"Source Property Node: {source_property_node}")
         # print(f"Target Property Node: {target_property_node}")
@@ -223,7 +225,6 @@ def serialize_ontouml_cm_template(**kwargs):
 
 def serialize_ontouml_nl_template(**kwargs):
     node_type = kwargs.get('type')
-    id_map = kwargs.get('id_map')
     if node_type in ['Generalization', 'Relation', "GeneralizationSet"]:
         assert 'id_map' in kwargs, "id_map is required for Generalization, Relation, and GeneralizationSet serialization"
     
@@ -236,31 +237,33 @@ def serialize_ontouml_nl_template(**kwargs):
         return f"{name}{description}"
 
         
-    elif node_type == "Generalization":
-        id_map = kwargs.get('id_map', {})
-        source_id, target_id = kwargs.get('specific')['id'], kwargs.get('general')['id']
-        if source_id is None or target_id is None:
-            raise ValueError(f"Source or target id not found in kwargs: source_id={source_id}, target_id={target_id}")
-        if source_id not in id_map or target_id not in id_map:
-            raise ValueError(f"Source or target id not found in id_map: source_id={source_id}, target_id={target_id}")
-        source, target = id_map[source_id], id_map[target_id]
-        try:
-            assert 'name' in source, f"name not found in source {source}"
-            assert 'name' in target, f"name not found in target {target}"
-        except AssertionError as e:
-            print(f"Generalization Error")
-            print(f"Source: {source}")
-            print(f"Target: {target}")
-            raise e
-        return (
-            f"In the context of this domain, a {source['name']} is of a {target['name']} type.\n"
-        )
+    # elif node_type == "Generalization":
+    #     id_map = kwargs.get('id_map', {})
+    #     source_id, target_id = kwargs.get('specific')['id'], kwargs.get('general')['id']
+    #     if source_id is None or target_id is None:
+    #         raise ValueError(f"Source or target id not found in kwargs: source_id={source_id}, target_id={target_id}")
+    #     if source_id not in id_map or target_id not in id_map:
+    #         raise ValueError(f"Source or target id not found in id_map: source_id={source_id}, target_id={target_id}")
+    #     source, target = id_map[source_id], id_map[target_id]
+    #     try:
+    #         assert 'name' in source, f"name not found in source {source}"
+    #         assert 'name' in target, f"name not found in target {target}"
+    #     except AssertionError as e:
+    #         print(f"Generalization Error")
+    #         print(f"Source: {source}")
+    #         print(f"Target: {target}")
+    #         raise e
+    #     return (
+    #         f"In the context of this domain, a {source['name']} is of a {target['name']} type.\n"
+    #     )
         
     elif node_type == "Relation":
         return (
             f"{get_relation_str(kwargs)}"
-            f"{' It is described as: ' + description + '.' if description else ''}"
+            f"{description + '.' if description else ''}"
         )
+    
+    return ""
         
 
 def serialize_model(model_node: dict, stype=Union[Literal['cm', 'nl']], level=0, use_structure=True):
@@ -272,6 +275,8 @@ def serialize_model(model_node: dict, stype=Union[Literal['cm', 'nl']], level=0,
     serialize_template = serialize_ontouml_cm_template if stype == 'cm' else serialize_ontouml_nl_template
     term_display = serialize_template(**model_node)
     
+    use_structure_indent = use_structure and stype == 'cm'
+    
     if 'properties' in model_node and isinstance(model_node['properties'], list):
         properties = list()
         for prop in model_node['properties']:
@@ -279,7 +284,7 @@ def serialize_model(model_node: dict, stype=Union[Literal['cm', 'nl']], level=0,
             if prop_display:
                 properties.append(prop_display)
         if properties:
-            properties_text = f"{'\t'*(level+1) if use_structure else ''}{term_name} has the following attributes: \n{'\t'*(level+1) if use_structure else ''}" + f"\n{'\t'*(level+1) if use_structure else ''}".join(properties) + "\n"
+            properties_text = f"{'\t'*(level+1) if use_structure_indent else ''}{term_name} has the following attributes: \n{'\t'*(level+1) if use_structure_indent else ''}" + f"\n{'\t'*(level+1) if use_structure_indent else ''}".join(properties) + "\n"
             term_display += f"\n{properties_text}"
     
     if 'literals' in model_node and isinstance(model_node['literals'], list) and model_node['literals']:
@@ -289,24 +294,24 @@ def serialize_model(model_node: dict, stype=Union[Literal['cm', 'nl']], level=0,
             if lit_display:
                 literals.append(lit_display)
         if literals:
-            literals_text = f"{'\t'*(level+1) if use_structure else ''}{term_name} has the following values: \n{'\t'*(level+1) if use_structure else ''}" + f"\n{'\t'*(level+1) if use_structure else ''}".join(literals) + "\n"
+            literals_text = f"{'\t'*(level+1) if use_structure_indent else ''}{term_name} has the following values: \n{'\t'*(level+1) if use_structure_indent else ''}" + f"\n{'\t'*(level+1) if use_structure_indent else ''}".join(literals) + "\n"
             term_display += f"\n{literals_text}"
     
     if 'contents' in model_node and isinstance(model_node['contents'], list):
         nested_terms = list()
         for child in model_node['contents']:
             child['id_map'] = model_node.get('id_map')
-            child_display = serialize_model(child, stype=stype, level=level + 1, use_structure=use_structure)
+            child_display = serialize_model(child, stype=stype, level=level + 1, use_structure=use_structure_indent)
             if child_display:
                 nested_terms.append(child_display)
         if nested_terms:
-            nested_text = f"{'\t'*(level+1) if use_structure else ''}{term_name} contains the following: \n{'\t'*(level+1) if use_structure else ''}" + f"\n{'\t'*(level+1) if use_structure else ''}".join(nested_terms) + "\n"
+            nested_text = f"{'\t'*(level+1) if use_structure_indent else ''}{term_name} contains the following: \n{'\t'*(level+1) if use_structure_indent else ''}" + f"\n{'\t'*(level+1) if use_structure_indent else ''}".join(nested_terms) + "\n"
             term_display += f"\n{nested_text}"
     
     if 'model' in model_node:
         new_model_node = model_node['model']
         new_model_node['id_map'] = model_node.get('id_map')
-        model_display = serialize_model(new_model_node, stype=stype, level=level, use_structure=use_structure)
+        model_display = serialize_model(new_model_node, stype=stype, level=level, use_structure=use_structure_indent)
         if model_display:
             term_display += f"\n{model_display}"
     
@@ -319,13 +324,13 @@ def get_meta_info(model_metadata):
     keywords = " with key terms " + model_metadata['keywords'] + ". " if model_metadata['keywords'] else ""
     theme = model_metadata['theme']
     ontology_type = ', '.join(ast.literal_eval(model_metadata['ontologyType'])) if model_metadata['ontologyType'] else "unspecified ontology type"
-    designed_for = ', '.join(ast.literal_eval(model_metadata['designedForTask'])) if model_metadata['designedForTask'] else "no specific task"
+    designed_for = f'the task(s) of {", ".join(ast.literal_eval(model_metadata['designedForTask']))}' if model_metadata['designedForTask'] else "no specific task"
     language = model_metadata['language']
-    context = ', '.join(ast.literal_eval(model_metadata['context'])) if model_metadata['context'] else "no specific context"
+    context = f'the context of {", ".join(ast.literal_eval(model_metadata['context']))}' if model_metadata['context'] else "no specific context"
     sentence = (f'The OntoUML model "{title}"'
-                f'is categorized under "{theme}". It is designed for the task(s) of {designed_for}, '
+                f'is categorized under "{theme}". It is designed for {designed_for}, '
                 f'and represents the ontology type(s): {ontology_type}. '
-                f'The language of the model is "{language}", created in the context of {context}'
+                f'The language of the model is "{language}", created in the {context}. '
                 f'{keywords}. Now we describe its terms. ')
     
     return sentence
