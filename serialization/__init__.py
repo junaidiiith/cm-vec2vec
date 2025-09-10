@@ -98,10 +98,10 @@ def serialize_bpmn_models(csv_chunks_dir):
         for f in os.listdir(csv_chunks_dir)
         if f.endswith('.csv')
     ]
-    for csv in tqdm(csv_chunk_paths, desc="Processing BPMN CSV chunks"):
+    for csv in tqdm(csv_chunk_paths, desc="Processing CSV chunks"):
         df = pd.read_csv(csv)
         
-        for i, row in tqdm(df.iterrows(), total=len(df), desc="Serializing BPMN models"):
+        for i, row in tqdm(df.iterrows(), total=len(df), desc=f"Serializing models from {csv}"):
             model_json = json.loads(row['Model JSON'])
             try:
                 model_nl_str = serialize_model(model_json, stype='nl', model_type='bpmn')

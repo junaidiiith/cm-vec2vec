@@ -1,5 +1,5 @@
 from typing import Union, Literal
-
+import re
 
 def get_resources(node):
     
@@ -29,17 +29,18 @@ def check_resource_presence(model, resources):
 
 
 def get_node_name(**kwargs):
+    element_source = kwargs.get('element_source', None)
     properties = kwargs.get('properties', {})
     level = kwargs.get('level')
-    name = properties.get('name', '')
-    description = f"{'\t'*(level)} is described by: {properties.get('documentation', '')}" if properties.get('documentation', '') else ""
-    return f"{name}{description}"
+    name = properties.get('name', '').replace('\n', ' ').strip()
+    description = f"{'\t'*(level)} is described by: {properties.get('documentation', '').replace('\n', ' ').strip()}" if properties.get('documentation', '') else ""
+    return re.sub(r'\s+', ' ', f"{name}{description}") if element_source != 'edge' else re.sub(r'\s+', ' ', f"{name}")
 
 
 def get_node_str(**kwargs):
     level = kwargs.get('level')
     node_name = get_node_name(**kwargs)
-    node_type = kwargs.get('stencil') if 'stencil' in kwargs and 'id' in kwargs.get('stencil') else ''
+    node_type = kwargs.get('stencil')['id'] if 'stencil' in kwargs and 'id' in kwargs.get('stencil') else ''
 
     node_str = f"{'\t'*(level)}Node: ({node_type}) {node_name}" if node_name else ""
     return node_str
@@ -51,7 +52,7 @@ def get_edges_str(**kwargs):
     edges = kwargs.get('outgoing', [])
     edges_str= ""
     edges_content = [
-        get_node_name(level=level, **resource_map[r['resourceId']]) 
+        get_node_name(level=level, element_source='edge', **resource_map[r['resourceId']]) 
         for r in edges if r['resourceId'] in resource_map
     ]
     edges_content = [e for e in edges_content if len(e)]
@@ -69,7 +70,7 @@ def serialize_bpmn_cm_template(**kwargs):
     level = kwargs.get('level')
     node_str = get_node_str(**kwargs)
     edges_str = get_edges_str(**kwargs)
-    return f"{node_str}\n{'\t'*(level)}Connections:\n {edges_str}".strip()
+    return f"{node_str}\n{'\t'*(level)}Connections:\n{'\t'*(level)}{edges_str}".strip()
 
 
 def serialize_model(model, resources, stype, level=0, use_structure=True):
@@ -83,7 +84,7 @@ def serialize_model(model, resources, stype, level=0, use_structure=True):
                 child_data.append(child_str)
     
     if stype == 'nl':
-        data_str = f"{node_data}" + f"\n".join(child_data)
+        data_str = (f"{node_data}\n" if node_data else "") + f"\n".join(child_data)
     else:
         data_str = f"{'\t'*level}{node_data}\n" + f"{'\t'*(level+1)}\n".join(child_data)
     return data_str
