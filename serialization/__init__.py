@@ -100,6 +100,9 @@ def serialize_bpmn_models(csv_chunks_dir):
     ]
     for csv in tqdm(csv_chunk_paths, desc="Processing CSV chunks"):
         df = pd.read_csv(csv)
+        serialized_file_pth = os.path.join(serialized_dir, os.path.basename(csv).replace('.csv', '_serialized.csv'))
+        if os.path.exists(serialized_file_pth):
+            continue
         
         for i, row in tqdm(df.iterrows(), total=len(df), desc=f"Serializing models from {csv}"):
             model_json = json.loads(row['Model JSON'])
@@ -113,7 +116,6 @@ def serialize_bpmn_models(csv_chunks_dir):
                 print(f"Model JSON: {json.dumps(model_json, indent=2)}")
                 raise e
 
-        serialized_file_pth = os.path.join(serialized_dir, os.path.basename(csv).replace('.csv', '_serialized.csv'))
         df.to_csv(serialized_file_pth, index=False, encoding='utf-8')
             
         
