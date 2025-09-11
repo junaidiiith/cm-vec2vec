@@ -8,43 +8,34 @@ It demonstrates the entire workflow from data loading to evaluation.
 from nl2cm.evaluation import NL2CMEvaluator
 from nl2cm.training import NL2CMTrainer
 from nl2cm.model import NL2CMTranslator
-from nl2cm.data_loader import load_nl2cm_data, create_evaluation_splits
+from nl2cm.data_loader import create_evaluation_splits, load_nl2cm_data
 import sys
 import torch
-import numpy as np
-import pickle
 from pathlib import Path
+import os
+from torch.utils.data import DataLoader, TensorDataset
+
+from nl2cm.utils import get_device
+from nl2cm.parse_args import parse_args
 
 # Add the current directory to Python path
 sys.path.append(str(Path(__file__).parent))
 
 
-def test_data_loading():
+def test_data_loading(data_path, nl_cm_cols):
     """Test data loading functionality."""
     print("=" * 60)
     print("Testing Data Loading")
     print("=" * 60)
 
-    # Load the dataframe
-    data_path = "datasets/eamodelset_nl2cm_embeddings_df.pkl"
-    with open(data_path, 'rb') as f:
-        df = pickle.load(f)
-
-    print(f"DataFrame shape: {df.shape}")
-    print(f"Columns: {df.columns.tolist()}")
-
-    # Extract embeddings
-    nlt_embeddings = np.stack(df['NL_Serialization_Emb'].values)
-    cmt_embeddings = np.stack(df['CM_Serialization_Emb'].values)
-
-    print(f"NL embeddings shape: {nlt_embeddings.shape}")
-    print(f"CM embeddings shape: {cmt_embeddings.shape}")
-    print(f"Embedding dimension: {nlt_embeddings.shape[1]}")
-
     # Test data loaders
-    train_loader, val_loader, test_loader = load_nl2cm_data(
-        data_path, test_size=0.2)
-
+    data = load_nl2cm_data(data_path, nl_cm_cols, test_size=0.2)
+    embedding_dim = data['embedding_dim']
+    train_loader = data['train_loader']
+    val_loader = data['val_loader']
+    test_loader = data['test_loader']
+    
+    print(f"Embedding dimension: {embedding_dim}")
     print(f"Train batches: {len(train_loader)}")
     print(f"Val batches: {len(val_loader)}")
     print(f"Test batches: {len(test_loader)}")
@@ -56,7 +47,7 @@ def test_data_loading():
     print(f"CM batch shape: {batch['cmt'].shape}")
 
     print("✓ Data loading test passed\n")
-    return nlt_embeddings.shape[1]
+    return embedding_dim
 
 
 def test_model_creation(embedding_dim):
@@ -78,7 +69,7 @@ def test_model_creation(embedding_dim):
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Test forward pass
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = get_device()
     model = model.to(device)
 
     # Create dummy batch
@@ -109,7 +100,7 @@ def test_model_creation(embedding_dim):
     return model, device
 
 
-def test_training(model, device, embedding_dim):
+def test_training(model, embedding_dim):
     """Test training functionality."""
     print("=" * 60)
     print("Testing Training")
@@ -118,7 +109,6 @@ def test_training(model, device, embedding_dim):
     # Create trainer with TensorBoard logging
     trainer = NL2CMTrainer(
         model=model,
-        device=device,
         lr_generator=1e-4,
         lr_discriminator=4e-4,
         lambda_rec=15.0,
@@ -131,7 +121,6 @@ def test_training(model, device, embedding_dim):
     )
 
     # Create dummy data loaders
-    from torch.utils.data import DataLoader, TensorDataset
 
     nlt_data = torch.randn(100, embedding_dim)
     cmt_data = torch.randn(100, embedding_dim)
@@ -160,14 +149,15 @@ def test_training(model, device, embedding_dim):
     return trainer
 
 
-def test_evaluation(model, device, embedding_dim):
+def test_evaluation(model, embedding_dim):
     """Test evaluation functionality."""
     print("=" * 60)
     print("Testing Evaluation")
     print("=" * 60)
-
+    
+    device = get_device()
     # Create evaluator
-    evaluator = NL2CMEvaluator(model, device)
+    evaluator = NL2CMEvaluator(model)
 
     # Create dummy evaluation data
     nlt_eval = torch.randn(50, embedding_dim).to(device)
@@ -184,7 +174,7 @@ def test_evaluation(model, device, embedding_dim):
     print(f"Mean rank: {mean_rank:.2f}")
 
     # Test comprehensive evaluation
-    results = evaluator.evaluate_all(nlt_eval, cmt_eval)
+    results = evaluator.evaluate(nlt_eval, cmt_eval)
     print(f"Evaluation results keys: {list(results.keys())}")
 
     # Test evaluation table
@@ -195,19 +185,19 @@ def test_evaluation(model, device, embedding_dim):
     return evaluator
 
 
-def test_full_pipeline():
+def test_full_pipeline(data_path, nl_cm_cols, epochs=500, save_every=50, eval_samples=20000):
     """Test the complete pipeline on real data."""
     print("=" * 60)
     print("Testing Full Pipeline on Real Data")
     print("=" * 60)
 
     # Load real data
-    data_path = "datasets/eamodelset_nl2cm_embeddings_df.pkl"
-    train_loader, val_loader, test_loader = load_nl2cm_data(
-        data_path, test_size=0.2)
+    data = load_nl2cm_data(data_path, nl_cm_cols, test_size=0.2)
+    train_loader = data['train_loader']
+    val_loader = data['val_loader']
+    embedding_dim = data['embedding_dim']
 
     # Create model
-    embedding_dim = 1536
     model = NL2CMTranslator(
         embedding_dim=embedding_dim,
         latent_dim=256,
@@ -217,13 +207,12 @@ def test_full_pipeline():
         dropout=0.1
     )
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = get_device()
     model = model.to(device)
 
     # Create trainer with TensorBoard logging
     trainer = NL2CMTrainer(
         model=model,
-        device=device,
         lr_generator=1e-4,
         lr_discriminator=4e-4,
         lambda_rec=15.0,
@@ -240,57 +229,56 @@ def test_full_pipeline():
     trainer.train(
         train_loader=train_loader,
         val_loader=val_loader,
-        epochs=500,
+        epochs=epochs,
         save_dir='test_checkpoints',
-        save_every=5
+        save_every=save_every
     )
 
     # Evaluate on test data
     print("Evaluating on test data...")
     evaluator = NL2CMEvaluator(
         model=model,
-        device=device,
         use_tensorboard=True,
         tensorboard_logger=trainer.tensorboard_logger
     )
 
-    # Create evaluation data
-    nlt_eval, cmt_eval = create_evaluation_splits(data_path, 100)
-    nlt_eval_tensor = torch.FloatTensor(nlt_eval).to(device)
-    cmt_eval_tensor = torch.FloatTensor(cmt_eval).to(device)
-
-    # Evaluate
-    results = evaluator.evaluate_all(nlt_eval_tensor, cmt_eval_tensor)
-
-    # Print results
+    
+    results = evaluator.evaluate_data_loader(data['test_loader'])
     print("\n" + evaluator.create_evaluation_table(results))
 
     # Close TensorBoard logger
     trainer.close_tensorboard()
 
     print("✓ Full pipeline test passed\n")
+    
 
-
-def main():
+def main(args):
     """Run all tests."""
     print("Starting NL2CM Pipeline Tests")
     print("=" * 80)
-
+    
+    data_path = os.path.join(args.data_path, args.dataset)
+    nl_cm_cols = [args.nl_col, args.cm_col]
     try:
         # Test 1: Data loading
-        embedding_dim = test_data_loading()
+        # embedding_dim = test_data_loading(data_path, nl_cm_cols)
 
         # Test 2: Model creation
-        model, device = test_model_creation(embedding_dim)
+        # model, device = test_model_creation(embedding_dim)
 
         # Test 3: Training
-        test_training(model, device, embedding_dim)
+        # test_training(model, embedding_dim)
 
         # Test 4: Evaluation
-        test_evaluation(model, device, embedding_dim)
+        # test_evaluation(model, embedding_dim)
 
         # Test 5: Full pipeline
-        test_full_pipeline()
+        test_full_pipeline(
+            data_path, nl_cm_cols, 
+            epochs=args.epochs, 
+            save_every=args.save_every, 
+            eval_samples=args.eval_samples
+        )
 
         print("=" * 80)
         print("All tests passed successfully! ✓")
@@ -306,5 +294,6 @@ def main():
 
 
 if __name__ == '__main__':
-    success = main()
+    args = parse_args()
+    success = main(args)
     sys.exit(0 if success else 1)

@@ -197,7 +197,7 @@ def main():
 
     # Evaluate model
     print("Evaluating NL2CM model...")
-    results = evaluator.evaluate_all(nlt_tensor, cmt_tensor)
+    results = evaluator.evaluate(nlt_tensor, cmt_tensor)
 
     # Compute baseline metrics
     print("Computing baseline metrics...")

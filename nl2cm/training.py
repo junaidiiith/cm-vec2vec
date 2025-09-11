@@ -14,6 +14,8 @@ from typing import Dict, List
 import numpy as np
 from tqdm import tqdm
 import os
+
+from nl2cm.utils import get_device
 try:
     from .tensorboard_logger import NL2CMTensorBoardLogger
 except ImportError:
@@ -28,18 +30,18 @@ class NL2CMTrainer:
     from the vec2vec approach: adversarial, reconstruction, cycle consistency, and VSP.
     """
 
-    def __init__(self, model: nn.Module, device: str = 'cuda',
-                 lr_generator: float = 1e-4, lr_discriminator: float = 4e-4,
-                 lambda_rec: float = 15.0, lambda_cyc: float = 15.0,
-                 lambda_vsp: float = 2.0, lambda_adv: float = 1.0,
-                 lambda_latent: float = 1.0, weight_decay: float = 0.01,
-                 use_tensorboard: bool = True, log_dir: str = 'tensorboard_logs'):
+    def __init__(self, model: nn.Module,
+        lr_generator: float = 1e-4, lr_discriminator: float = 4e-4,
+        lambda_rec: float = 15.0, lambda_cyc: float = 15.0,
+        lambda_vsp: float = 2.0, lambda_adv: float = 1.0,
+        lambda_latent: float = 1.0, weight_decay: float = 0.01,
+        use_tensorboard: bool = True, log_dir: str = 'tensorboard_logs'
+    ):
         """
         Initialize the trainer.
 
         Args:
             model: The NL2CM translation model
-            device: Device to run training on
             lr_generator: Learning rate for generator components
             lr_discriminator: Learning rate for discriminators
             lambda_rec: Weight for reconstruction loss
@@ -51,8 +53,8 @@ class NL2CMTrainer:
             use_tensorboard: Whether to use TensorBoard logging
             log_dir: Directory for TensorBoard logs
         """
-        self.model = model.to(device)
-        self.device = device
+        self.device = get_device()
+        self.model = model.to(self.device)
 
         # Loss weights
         self.lambda_rec = lambda_rec
@@ -78,6 +80,7 @@ class NL2CMTrainer:
         self.tensorboard_logger = None
         if use_tensorboard:
             self.tensorboard_logger = NL2CMTensorBoardLogger(log_dir)
+
 
     def _setup_optimizers(self, lr_generator: float, lr_discriminator: float,
                           weight_decay: float):
@@ -249,6 +252,7 @@ class NL2CMTrainer:
             self.tensorboard_logger.increment_global_step()
 
         return {k: v.item() if isinstance(v, torch.Tensor) else v for k, v in losses.items()}
+
 
     def validate(self, val_loader: DataLoader) -> Dict[str, float]:
         """Validate the model."""

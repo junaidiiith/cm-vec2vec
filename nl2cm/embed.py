@@ -8,15 +8,12 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import OpenAIEmbeddings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
-import torch
 from typing import List
+from nl2cm.utils import get_device
 
 
 load_dotenv()
 
-
-def cuda_device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def num_tokens_from_string(string: str, encoding_name: str) -> int:
     encoding = tiktoken.get_encoding(encoding_name)
@@ -37,7 +34,7 @@ def chunk_text(text, encoding_name="cl100k_base", chunk_size=8192, chunk_overlap
 
 
 def get_langchain_embedding(text, emb_type = 'huggingface', chunk_size=8192, encoding_name="cl100k_base", aggregator="mean"):
-    model_kwargs = {'device': cuda_device()}
+    model_kwargs = {'device': get_device()}
     encode_kwargs = {'normalize_embeddings': True}
     
     chunks = chunk_text(text, encoding_name=encoding_name, chunk_size=chunk_size)
@@ -75,42 +72,6 @@ def get_langchain_embedding(text, emb_type = 'huggingface', chunk_size=8192, enc
     doc_vec = (doc_vec / np.linalg.norm(doc_vec))    # L2-normalize if you like
     return doc_vec
 
-
-
-# def get_openai_embedding(text, chunk_size=8192, encoding_name="cl100k_base", aggregator="mean"):
-#     if pd.isna(text) or not isinstance(text, str) or text.strip() == "":
-#         return None
-#     try:
-#         chunks = chunk_text(text, encoding_name=encoding_name, chunk_size=chunk_size)
-#         embeddings = []
-#         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-#         for chunk in chunks:
-#             try:
-#                 response = client.embeddings.create(
-#                     input=chunk,
-#                     model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
-#                 )
-#             except Exception as e:
-#                 print(f"OpenAI API error for chunk: {str(chunk)[:30]}...: {e}")
-#                 raise e
-#             embeddings.append(np.array(response.data[0].embedding))
-#         if not embeddings:
-#             return None
-#         if aggregator == "mean":
-#             return np.mean(embeddings, axis=0)
-#         elif aggregator == "max":
-#             return np.max(embeddings, axis=0)
-#         elif aggregator == "min":
-#             return np.min(embeddings, axis=0)
-#         elif aggregator == "sum":
-#             return np.sum(embeddings, axis=0)
-#         elif aggregator == "log":
-#             return np.log1p(np.abs(embeddings)).sum(axis=0)
-#         else:
-#             return np.mean(embeddings, axis=0)
-#     except Exception as e:
-#         print(f"Embedding error for text: {str(text)[:30]}...: {e}")
-#         return None
 
 def process_column_sequential(texts: List[str], emb_type='huggingface', chunk_size=8192, encoding_name="cl100k_base", aggregator="mean"):
     return [get_langchain_embedding(text, emb_type, chunk_size, encoding_name, aggregator) for text in tqdm(texts, desc="Getting embeddings sequentially")]
@@ -176,4 +137,69 @@ def add_embeddings(
     if save:
         with open(f"{output_pth if output_pth else 'embeddings_df.pkl'}", 'wb') as f:
             pickle.dump(df, f)
-            
+
+
+def extract_embddings_from_df(fp, nl_cm_cols) -> dict:
+    nl_col, cm_col = nl_cm_cols
+    with open(os.path.join(fp), "rb") as f:
+        df = pickle.load(f)
+    
+    assert nl_col in df.columns, f"NL column {nl_col} not found in {fp}"
+    assert cm_col in df.columns, f"CM column {cm_col} not found in {fp}"
+
+    nl_null_idx = df.loc[df[nl_col].isnull()].index
+    cm_null_idx = df.loc[df[cm_col].isnull()].index
+    null_idx = list(set(nl_null_idx).union(set(cm_null_idx)))
+    
+    nl_emb = np.stack(df[~df.index.isin(null_idx)][nl_col].values)
+    cm_emb = np.stack(df[~df.index.isin(null_idx)][cm_col].values)
+    return {
+        'nl_emb': nl_emb,
+        'cm_emb': cm_emb,
+        'total_count': len(df),
+        'total_nl_count': len(nl_null_idx),
+        'total_cm_count': len(cm_null_idx),
+        'total_null_count': len(null_idx)
+    }
+
+
+def get_embeddings(data_path, nl_cm_cols) -> tuple[np.ndarray, np.ndarray]:
+    assert isinstance(data_path, str), f"Data path must be a string, got {type(data_path)}"
+    assert isinstance(nl_cm_cols, list), f"NL and CM columns must be a list, got {type(nl_cm_cols)}"
+    assert len(nl_cm_cols) == 2, f"NL and CM columns must be a list of length 2, got {len(nl_cm_cols)}"
+    
+    
+    total_count = dict()
+    total_nl_count = dict()
+    total_cm_count = dict()
+    total_null_count = dict()
+    NLT_EMB, CM_EMB = np.array([]), np.array([])
+    for file in tqdm([f for f in os.listdir(data_path) if f.endswith(".pkl")]):
+        # print(f"Processing file: {file}")
+                
+        response = extract_embddings_from_df(
+            os.path.join(data_path, file), 
+            nl_cm_cols
+        )
+
+        if NLT_EMB.size == 0:
+            NLT_EMB = response['nl_emb']
+            CM_EMB = response['cm_emb']
+        else:
+            NLT_EMB = np.concatenate([NLT_EMB, response['nl_emb']])
+            CM_EMB = np.concatenate([CM_EMB, response['cm_emb']])
+        
+        total_count[file] = response['total_count']
+        total_nl_count[file] = response['total_nl_count']
+        total_cm_count[file] = response['total_cm_count']
+        total_null_count[file] = response['total_null_count']
+    
+    print(f"Total rows: {sum(total_count.values())}")
+    print(f"Total null NL rows: {sum(total_nl_count.values())}: {sum(total_nl_count.values()) / sum(total_count.values()) * 100}%")
+    print(f"Total null CM rows: {sum(total_cm_count.values())}: {sum(total_cm_count.values()) / sum(total_count.values()) * 100}%")
+    print(f"Total null rows: {sum(total_null_count.values())}: {sum(total_null_count.values()) / sum(total_count.values()) * 100}%")
+    
+    print("Size of NLT_EMB: ", NLT_EMB.shape)
+    print("Size of CM_EMB: ", CM_EMB.shape)
+     
+    return NLT_EMB, CM_EMB

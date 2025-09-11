@@ -5,42 +5,20 @@ This script evaluates a trained NL2CM model and generates comprehensive results
 matching the vec2vec paper evaluation format.
 """
 
-import argparse
 import os
 import json
 import torch
 
-from data_loader import create_evaluation_splits
-from model import NL2CMTranslator
-from evaluation import NL2CMEvaluator
+from nl2cm.data_loader import create_evaluation_splits
+from nl2cm.model import NL2CMTranslator
+from nl2cm.evaluation import NL2CMEvaluator
+from nl2cm.utils import get_device
+from nl2cm.parse_args import parse_args
 
 
-def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description='Evaluate NL2CM translation model')
-
-    # Model arguments
-    parser.add_argument('--checkpoint_path', type=str, required=True,
-                        help='Path to the model checkpoint')
-    parser.add_argument('--data_path', type=str,
-                        default='datasets/eamodelset_nl2cm_embeddings_df.pkl',
-                        help='Path to the pickle file containing embeddings')
-    parser.add_argument('--device', type=str, default='cuda',
-                        help='Device to use for evaluation')
-
-    # Evaluation arguments
-    parser.add_argument('--eval_samples', type=int, default=1000,
-                        help='Number of samples for evaluation')
-    parser.add_argument('--output_dir', type=str, default='evaluation_results',
-                        help='Directory to save evaluation results')
-
-    return parser.parse_args()
-
-
-def load_model(checkpoint_path: str, device: str) -> NL2CMTranslator:
+def load_model(checkpoint_path: str) -> NL2CMTranslator:
     """Load a trained model from checkpoint."""
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=get_device())
 
     # Extract model configuration from checkpoint
     model_state = checkpoint['model_state_dict']
@@ -73,7 +51,7 @@ def load_model(checkpoint_path: str, device: str) -> NL2CMTranslator:
 
     # Load state dict
     model.load_state_dict(model_state)
-    model.to(device)
+    model.to(get_device())
     model.eval()
 
     return model
@@ -163,8 +141,10 @@ def main():
     """Main evaluation function."""
     args = parse_args()
 
+    data_path = os.path.join(args.data_path, args.dataset)
+    nl_cm_cols = [args.nl_col, args.cm_col]
     # Set device
-    device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
+    device = get_device()
     print(f"Using device: {device}")
 
     # Create output directory
@@ -172,16 +152,15 @@ def main():
 
     # Load model
     print("Loading model...")
-    model = load_model(args.checkpoint_path, device)
+    model = load_model(args.checkpoint_path)
     print("Model loaded successfully")
 
     # Create evaluator
-    evaluator = NL2CMEvaluator(model, device)
+    evaluator = NL2CMEvaluator(model)
 
     # Load evaluation data
     print("Loading evaluation data...")
-    nlt_eval, cmt_eval = create_evaluation_splits(
-        args.data_path, args.eval_samples)
+    nlt_eval, cmt_eval = create_evaluation_splits(data_path, nl_cm_cols, args.eval_samples)
     nlt_eval_tensor = torch.FloatTensor(nlt_eval).to(device)
     cmt_eval_tensor = torch.FloatTensor(cmt_eval).to(device)
 
@@ -189,12 +168,11 @@ def main():
 
     # Compute baseline results
     print("Computing baseline results...")
-    baseline_results = create_baseline_comparison(
-        nlt_eval_tensor, cmt_eval_tensor)
+    baseline_results = create_baseline_comparison(nlt_eval_tensor, cmt_eval_tensor)
 
     # Evaluate model
     print("Evaluating model...")
-    results = evaluator.evaluate_all(nlt_eval_tensor, cmt_eval_tensor)
+    results = evaluator.evaluate(nlt_eval_tensor, cmt_eval_tensor)
 
     # Create evaluation table
     table = create_evaluation_table(results, baseline_results)
