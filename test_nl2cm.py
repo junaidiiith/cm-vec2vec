@@ -5,6 +5,7 @@ This script tests the complete NL2CM pipeline on the provided embeddings.
 It demonstrates the entire workflow from data loading to evaluation.
 """
 
+import json
 from nl2cm.evaluation import NL2CMEvaluator
 from nl2cm.training import NL2CMTrainer
 from nl2cm.model import NL2CMTranslator
@@ -185,14 +186,18 @@ def test_evaluation(model, embedding_dim):
     return evaluator
 
 
-def test_full_pipeline(data_path, nl_cm_cols, epochs=500, save_every=50, eval_samples=20000):
+def test_full_pipeline():
     """Test the complete pipeline on real data."""
+    
     print("=" * 60)
     print("Testing Full Pipeline on Real Data")
     print("=" * 60)
-
+    args = parse_args()
+    data_path = os.path.join(args.data_path, args.dataset)
+    nl_cm_cols = [args.nl_col, args.cm_col]
+    
     # Load real data
-    data = load_nl2cm_data(data_path, nl_cm_cols, test_size=0.2)
+    data = load_nl2cm_data(data_path, nl_cm_cols, test_size=0.2, limit=args.limit, batch_size=args.batch_size, num_workers=args.num_workers)
     train_loader = data['train_loader']
     val_loader = data['val_loader']
     embedding_dim = data['embedding_dim']
@@ -221,17 +226,21 @@ def test_full_pipeline(data_path, nl_cm_cols, epochs=500, save_every=50, eval_sa
         lambda_adv=1.0,
         lambda_latent=1.0,
         use_tensorboard=True,
-        log_dir='test_tensorboard_logs'
+        log_dir=args.output_dir
     )
 
     # Train for a few epochs
-    print("Training for 5 epochs...")
+    print(f"Training for {args.epochs} epochs...")
+    save_dir = os.path.join(args.output_dir, args.save_dir)
+    eval_dir = os.path.join(args.output_dir, args.eval_dir)
+    
+    os.makedirs(save_dir, exist_ok=True)
     trainer.train(
         train_loader=train_loader,
         val_loader=val_loader,
-        epochs=epochs,
-        save_dir='test_checkpoints',
-        save_every=save_every
+        epochs=args.epochs,
+        save_dir=save_dir,
+        save_every=args.save_every
     )
 
     # Evaluate on test data
@@ -242,8 +251,11 @@ def test_full_pipeline(data_path, nl_cm_cols, epochs=500, save_every=50, eval_sa
         tensorboard_logger=trainer.tensorboard_logger
     )
 
-    
+    os.makedirs(eval_dir, exist_ok=True)
     results = evaluator.evaluate_data_loader(data['test_loader'])
+    with open(os.path.join(eval_dir, 'results.json'), 'w') as f:
+        json.dump(results, f)
+    print(f"Evaluation results saved to {os.path.join(eval_dir, 'results.json')}")        
     print("\n" + evaluator.create_evaluation_table(results))
 
     # Close TensorBoard logger
@@ -252,33 +264,13 @@ def test_full_pipeline(data_path, nl_cm_cols, epochs=500, save_every=50, eval_sa
     print("✓ Full pipeline test passed\n")
     
 
-def main(args):
+def main():
     """Run all tests."""
     print("Starting NL2CM Pipeline Tests")
     print("=" * 80)
     
-    data_path = os.path.join(args.data_path, args.dataset)
-    nl_cm_cols = [args.nl_col, args.cm_col]
     try:
-        # Test 1: Data loading
-        # embedding_dim = test_data_loading(data_path, nl_cm_cols)
-
-        # Test 2: Model creation
-        # model, device = test_model_creation(embedding_dim)
-
-        # Test 3: Training
-        # test_training(model, embedding_dim)
-
-        # Test 4: Evaluation
-        # test_evaluation(model, embedding_dim)
-
-        # Test 5: Full pipeline
-        test_full_pipeline(
-            data_path, nl_cm_cols, 
-            epochs=args.epochs, 
-            save_every=args.save_every, 
-            eval_samples=args.eval_samples
-        )
+        test_full_pipeline()
 
         print("=" * 80)
         print("All tests passed successfully! ✓")
@@ -294,6 +286,5 @@ def main(args):
 
 
 if __name__ == '__main__':
-    args = parse_args()
-    success = main(args)
+    success = main()
     sys.exit(0 if success else 1)

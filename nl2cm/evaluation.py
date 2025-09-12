@@ -62,6 +62,7 @@ class NL2CMEvaluator:
         Returns:
             Mean cosine similarity
         """
+        
         with torch.no_grad():
             # Translate NL to CM
             translated = self.model.translate_nlt_to_cmt(nlt_emb)
@@ -348,23 +349,23 @@ class NL2CMEvaluator:
         results = {}
 
         # Basic translation metrics
-        results['cosine_similarity'] = self.compute_cosine_similarity(nlt_emb, cmt_emb)
+        results['cosine_similarity'] = self.compute_cosine_similarity(nlt_emb.to(get_device()), cmt_emb.to(get_device()))
 
         # Retrieval metrics
-        retrieval_metrics = self.compute_retrieval_metrics(nlt_emb, cmt_emb)
+        retrieval_metrics = self.compute_retrieval_metrics(nlt_emb.to(get_device()), cmt_emb.to(get_device()))
         results.update(retrieval_metrics)
 
         # Cycle consistency metrics
-        cycle_metrics = self.compute_cycle_consistency_metrics(nlt_emb, cmt_emb)
+        cycle_metrics = self.compute_cycle_consistency_metrics(nlt_emb.to(get_device()), cmt_emb.to(get_device()))
         results.update(cycle_metrics)
 
         # Geometry preservation metrics
-        geometry_metrics = self.compute_geometry_preservation_metrics(nlt_emb, cmt_emb)
+        geometry_metrics = self.compute_geometry_preservation_metrics(nlt_emb.to(get_device()), cmt_emb.to(get_device()))
         results.update(geometry_metrics)
 
         # Classification metrics (if labels provided)
         if labels is not None:
-            classification_metrics = self.compute_classification_metrics(nlt_emb, cmt_emb, labels)
+            classification_metrics = self.compute_classification_metrics(nlt_emb.to(get_device()), cmt_emb.to(get_device()), labels)
             results.update(classification_metrics)
 
         # Log to TensorBoard
@@ -373,8 +374,8 @@ class NL2CMEvaluator:
 
             # Log translation examples
             with torch.no_grad():
-                translated_emb = self.model.translate_nlt_to_cmt(nlt_emb)
-                self.tensorboard_logger.log_translation_examples(nlt_emb, cmt_emb, translated_emb)
+                translated_emb = self.model.translate_nlt_to_cmt(nlt_emb.to(get_device()))
+                self.tensorboard_logger.log_translation_examples(nlt_emb.to(get_device()), cmt_emb.to(get_device()), translated_emb.to(get_device()))
 
         return results
 

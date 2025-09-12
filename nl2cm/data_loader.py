@@ -130,8 +130,8 @@ class PairedNL2CMDataset(Dataset):
         }
 
 
-def load_nl2cm_data(data_path: str, nl_cm_cols: list[str], test_size: float = 0.2,
-                    random_state: int = 42) -> Tuple[DataLoader, DataLoader, DataLoader]:
+def load_nl2cm_data(data_path: str, nl_cm_cols: list[str], test_size: float = 0.2, batch_size: int = 32, num_workers: int = 4,
+                    random_state: int = 42, limit: int = None) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
     Load NL2CM data and create train/validation/test splits.
 
@@ -144,7 +144,7 @@ def load_nl2cm_data(data_path: str, nl_cm_cols: list[str], test_size: float = 0.
         Tuple of (train_loader, val_loader, test_loader)
     """
     # Load the dataframe
-    nlt_embeddings, cmt_embeddings = get_embeddings(data_path, nl_cm_cols)
+    nlt_embeddings, cmt_embeddings = get_embeddings(data_path, nl_cm_cols, limit=limit)
 
     print(
         f"Loaded {len(nlt_embeddings)} NL embeddings and {len(cmt_embeddings)} CM embeddings")
@@ -169,11 +169,11 @@ def load_nl2cm_data(data_path: str, nl_cm_cols: list[str], test_size: float = 0.
 
     # Create data loaders
     train_loader = DataLoader(
-        train_dataset, batch_size=32, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=32,
-                            shuffle=False, num_workers=4)
-    test_loader = DataLoader(test_dataset, batch_size=32,
-                             shuffle=False, num_workers=4)
+        train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size,
+                            shuffle=False, num_workers=num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size,
+                             shuffle=False, num_workers=num_workers)
 
     return {
         'train_loader': train_loader,
@@ -183,7 +183,7 @@ def load_nl2cm_data(data_path: str, nl_cm_cols: list[str], test_size: float = 0.
     }
 
 
-def create_evaluation_splits(data_path: str, nl_cm_cols: list[str], n_eval_samples: int = 1000) -> Tuple[np.ndarray, np.ndarray]:
+def create_evaluation_splits(data_path: str, nl_cm_cols: list[str], n_eval_samples: int = 1000, limit: int = None) -> Tuple[np.ndarray, np.ndarray]:
     """
     Create evaluation splits for computing vec2vec-style metrics.
 
@@ -194,7 +194,7 @@ def create_evaluation_splits(data_path: str, nl_cm_cols: list[str], n_eval_sampl
     Returns:
         Tuple of (nlt_eval, cmt_eval) arrays
     """
-    nlt_embeddings, cmt_embeddings = get_embeddings(data_path, nl_cm_cols)
+    nlt_embeddings, cmt_embeddings = get_embeddings(data_path, nl_cm_cols, limit=limit)
 
     # Sample for evaluation
     n_samples = min(n_eval_samples, len(nlt_embeddings))

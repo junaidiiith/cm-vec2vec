@@ -163,7 +163,7 @@ def extract_embddings_from_df(fp, nl_cm_cols) -> dict:
     }
 
 
-def get_embeddings(data_path, nl_cm_cols) -> tuple[np.ndarray, np.ndarray]:
+def get_embeddings(data_path, nl_cm_cols, limit=None) -> tuple[np.ndarray, np.ndarray]:
     assert isinstance(data_path, str), f"Data path must be a string, got {type(data_path)}"
     assert isinstance(nl_cm_cols, list), f"NL and CM columns must be a list, got {type(nl_cm_cols)}"
     assert len(nl_cm_cols) == 2, f"NL and CM columns must be a list of length 2, got {len(nl_cm_cols)}"
@@ -174,7 +174,8 @@ def get_embeddings(data_path, nl_cm_cols) -> tuple[np.ndarray, np.ndarray]:
     total_cm_count = dict()
     total_null_count = dict()
     NLT_EMB, CM_EMB = np.array([]), np.array([])
-    for file in tqdm([f for f in os.listdir(data_path) if f.endswith(".pkl")]):
+    limit = limit if limit is not None else len([f for f in os.listdir(data_path) if f.endswith(".pkl")])
+    for file in tqdm([f for f in os.listdir(data_path) if f.endswith(".pkl")][:limit]):
         # print(f"Processing file: {file}")
                 
         response = extract_embddings_from_df(

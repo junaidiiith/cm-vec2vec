@@ -16,6 +16,8 @@ def parse_args():
     parser.add_argument("--dataset", type=str, default="archimate")
     parser.add_argument("--nl_col", type=str, default="NL_Serialization_Emb")
     parser.add_argument("--cm_col", type=str, default="CM_Serialization_Emb")
+    parser.add_argument('--limit', type=int, default=None,
+                        help='Limit the number of samples to use for training')
 
     # Model arguments
     parser.add_argument('--embedding_dim', type=int, default=1536,
@@ -34,6 +36,10 @@ def parse_args():
                         help='Use conditioning in the backbone')
     parser.add_argument('--cond_dim', type=int, default=0,
                         help='Conditioning dimension')
+
+    # Data loader arguments
+    parser.add_argument('--num_workers', type=int, default=4,
+                        help='Number of workers')
 
     # Training arguments
     parser.add_argument('--epochs', type=int, default=100,
@@ -60,8 +66,12 @@ def parse_args():
                         help='Latent adversarial loss weight')
 
     # Training options
-    parser.add_argument('--save_dir', type=str, default='checkpoints/nl2cm',
+    parser.add_argument("--output_dir", type=str, default="logs",
+                        help='Directory to save logs')
+    parser.add_argument('--save_dir', type=str, default='checkpoints',
                         help='Directory to save checkpoints')
+    parser.add_argument('--eval_dir', type=str, default='results',
+                        help='Directory to save evaluation results')
     parser.add_argument('--save_every', type=int, default=50,
                         help='Save model every N epochs')
     parser.add_argument('--early_stopping_patience', type=int, default=20,
@@ -70,7 +80,7 @@ def parse_args():
     # TensorBoard options
     parser.add_argument('--use_tensorboard', action='store_true', default=True,
                         help='Use TensorBoard logging')
-    parser.add_argument('--tensorboard_dir', type=str, default='tensorboard_logs',
+    parser.add_argument('--tensorboard_dir', type=str, default='logs',
                         help='Directory for TensorBoard logs')
     parser.add_argument('--experiment_name', type=str, default=None,
                         help='Name for the experiment (default: auto-generated)')
@@ -78,7 +88,7 @@ def parse_args():
     # Evaluation arguments
     parser.add_argument('--eval_samples', type=int, default=20000,
                         help='Number of samples for evaluation')
-    parser.add_argument('--eval_every', type=int, default=10,
+    parser.add_argument('--eval_every', type=int, default=50,
                         help='Evaluate every N epochs')
 
     return parser.parse_args()
