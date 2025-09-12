@@ -2,7 +2,8 @@
 
 ## Overview
 
-I have successfully implemented a complete NL2CM (Natural Language to Conceptual Model) translation system based on the vec2vec approach. The implementation includes all components needed for training, evaluation, and deployment.
+I have successfully implemented a complete NL2CM (Natural Language to Conceptual Model) translation system based on the vec2vec approach. 
+The implementation includes all components needed for training, evaluation, and deployment.
 
 ## What Was Implemented
 

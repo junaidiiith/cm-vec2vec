@@ -5,12 +5,12 @@ This module handles loading and preprocessing of Natural Language (NL) and Conce
 embeddings for the NL2CM translation task, following the vec2vec approach.
 """
 
-import pickle
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
-from typing import Tuple, Dict, Optional
+from typing import Tuple, Dict
 import random
+from nl2cm.embed import get_embeddings
 from sklearn.model_selection import train_test_split
 
 
@@ -127,8 +127,20 @@ class PairedNL2CMDataset(Dataset):
         }
 
 
-def load_nl2cm_data(data_path: str, test_size: float = 0.2,
-                    random_state: int = 42) -> Tuple[DataLoader, DataLoader, DataLoader]:
+def get_data_embeddings_dimension(data_path: str, nl_cm_cols: list[str]) -> int:
+    """Get the dimension of the embeddings."""
+    nlt_embeddings, _ = get_embeddings(data_path, nl_cm_cols, limit=1)
+    return nlt_embeddings.shape[1]
+
+
+def get_data_embeddings_dimension(data_path: str, nl_cm_cols: list[str]) -> int:
+    """Get the dimension of the embeddings."""
+    nlt_embeddings, _ = get_embeddings(data_path, nl_cm_cols, limit=1)
+    return nlt_embeddings.shape[1]
+
+
+def load_nl2cm_data(data_path: str, nl_cm_cols: list[str], test_size: float = 0.2, batch_size: int = 32, num_workers: int = 4,
+                    random_state: int = 42, limit: int = None) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
     Load NL2CM data and create train/validation/test splits.
 
@@ -141,12 +153,7 @@ def load_nl2cm_data(data_path: str, test_size: float = 0.2,
         Tuple of (train_loader, val_loader, test_loader)
     """
     # Load the dataframe
-    with open(data_path, 'rb') as f:
-        df = pickle.load(f)
-
-    # Extract embeddings
-    nlt_embeddings = np.stack(df['NL_Serialization_Emb'].values)
-    cmt_embeddings = np.stack(df['CM_Serialization_Emb'].values)
+    nlt_embeddings, cmt_embeddings = get_embeddings(data_path, nl_cm_cols, limit=limit)
 
     print(
         f"Loaded {len(nlt_embeddings)} NL embeddings and {len(cmt_embeddings)} CM embeddings")
@@ -171,44 +178,14 @@ def load_nl2cm_data(data_path: str, test_size: float = 0.2,
 
     # Create data loaders
     train_loader = DataLoader(
-        train_dataset, batch_size=32, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=32,
-                            shuffle=False, num_workers=4)
-    test_loader = DataLoader(test_dataset, batch_size=32,
-                             shuffle=False, num_workers=4)
+        train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size,
+                            shuffle=False, num_workers=num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size,
+                             shuffle=False, num_workers=num_workers)
 
-    return train_loader, val_loader, test_loader
-
-
-def create_evaluation_splits(data_path: str, n_eval_samples: int = 1000) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Create evaluation splits for computing vec2vec-style metrics.
-
-    Args:
-        data_path: Path to the pickle file containing the dataframe
-        n_eval_samples: Number of samples to use for evaluation
-
-    Returns:
-        Tuple of (nlt_eval, cmt_eval) arrays
-    """
-    with open(data_path, 'rb') as f:
-        df = pickle.load(f)
-
-    # Extract embeddings
-    nlt_embeddings = np.stack(df['NL_Serialization_Emb'].values)
-    cmt_embeddings = np.stack(df['CM_Serialization_Emb'].values)
-
-    # Sample for evaluation
-    n_samples = min(n_eval_samples, len(nlt_embeddings))
-    indices = np.random.choice(len(nlt_embeddings), n_samples, replace=False)
-
-    nlt_eval = nlt_embeddings[indices]
-    cmt_eval = cmt_embeddings[indices]
-
-    # Normalize
-    nlt_eval = nlt_eval / \
-        (np.linalg.norm(nlt_eval, axis=1, keepdims=True) + 1e-8)
-    cmt_eval = cmt_eval / \
-        (np.linalg.norm(cmt_eval, axis=1, keepdims=True) + 1e-8)
-
-    return nlt_eval, cmt_eval
+    return {
+        'train_loader': train_loader,
+        'val_loader': val_loader,
+        'test_loader': test_loader,
+    }
