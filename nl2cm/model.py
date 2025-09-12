@@ -8,7 +8,7 @@ The model uses adapters and a shared backbone to translate between NL and CM emb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Optional
+from typing import Dict, Tuple, Optional
 
 
 class Adapter(nn.Module):

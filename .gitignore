@@ -206,54 +206,17 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Data and model files
-datasets/
 datasets*
-*.pkl
-*.pt
-*.pth
-*.ckpt
-*.h5
-*.hdf5
-
-# Checkpoints and model saves
-checkpoints/
-checkpoints*
-test_checkpoints/
-test_checkpoints*
-demo_checkpoints/
-demo_checkpoints*
-
-# TensorBoard logs
-tensorboard_logs/
-tensorboard_logs*
-test_tensorboard_logs/
-test_tensorboard_logs*
-runs/
 runs*
 
-# Evaluation results
-evaluation_results/
-evaluation_results*
-
-# Large model files (>50MB)
-*.pt
-*.pth
-*.ckpt
-*.bin
-*.safetensors
-
-# Jupyter notebook outputs
-*.ipynb
-
-# vec2vec specific
 vec2vec*
 
-# Logs
+tensorboard_logs*
+
+test_checkpoints*
+test_tensorboard_logs*
+checkpoints*
 *logs*
-*.log
 
-# VS Code
+
 .vscode/
-
-shakespeare.txt

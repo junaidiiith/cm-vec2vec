@@ -12,6 +12,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.cluster import KMeans
+from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
+import pandas as pd
 import os
 import sys
 from pathlib import Path
@@ -197,7 +200,7 @@ def main():
 
     # Evaluate model
     print("Evaluating NL2CM model...")
-    results = evaluator.evaluate(nlt_tensor, cmt_tensor)
+    results = evaluator.evaluate_all(nlt_tensor, cmt_tensor)
 
     # Compute baseline metrics
     print("Computing baseline metrics...")

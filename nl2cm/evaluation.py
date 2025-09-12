@@ -9,20 +9,13 @@ This module implements evaluation metrics matching the vec2vec paper:
 """
 
 import torch
-from torch.utils.data import DataLoader
 import torch.nn.functional as F
 import numpy as np
-from typing import Dict, List, Optional
+from typing import Dict, Tuple, List, Optional
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 from sklearn.cluster import KMeans
+from sklearn.metrics.pairwise import cosine_similarity
 import matplotlib.pyplot as plt
-from tqdm.auto import tqdm
-
-from nl2cm.utils import get_device
-try:
-    from .tensorboard_logger import NL2CMTensorBoardLogger
-except ImportError:
-    from tensorboard_logger import NL2CMTensorBoardLogger
 
 
 class NL2CMEvaluator:
@@ -33,22 +26,17 @@ class NL2CMEvaluator:
     evaluation metrics for the NL2CM task.
     """
 
-    def __init__(self, model: torch.nn.Module,
-            use_tensorboard: bool = False, 
-            tensorboard_logger: Optional[NL2CMTensorBoardLogger] = None
-        ):
+    def __init__(self, model: torch.nn.Module, device: str = 'cuda'):
         """
         Initialize the evaluator.
 
         Args:
             model: The trained NL2CM model
-            use_tensorboard: Whether to use TensorBoard logging
-            tensorboard_logger: Optional TensorBoard logger instance
+            device: Device to run evaluation on
         """
-        self.model = model.to(get_device())
+        self.model = model.to(device)
+        self.device = device
         self.model.eval()
-        self.use_tensorboard = use_tensorboard
-        self.tensorboard_logger = tensorboard_logger
 
     def compute_cosine_similarity(self, nlt_emb: torch.Tensor,
                                   cmt_emb: torch.Tensor) -> float:
@@ -62,7 +50,6 @@ class NL2CMEvaluator:
         Returns:
             Mean cosine similarity
         """
-        
         with torch.no_grad():
             # Translate NL to CM
             translated = self.model.translate_nlt_to_cmt(nlt_emb)
@@ -312,28 +299,7 @@ class NL2CMEvaluator:
                 'nmi_improvement': trans_nmi - orig_nmi
             }
 
-    def evaluate_data_loader(self, data_loader: DataLoader) -> Dict[str, float]:
-        """
-        Evaluate the model on a data loader.
-        """
-        batch_results = []
-        for batch in tqdm(data_loader, desc="Evaluating Test Dataloader"):
-            nlt_emb = batch['nlt']
-            cmt_emb = batch['cmt']
-            labels = batch['labels'] if 'labels' in batch else None
-            if labels is not None:
-                labels = labels.cpu().numpy()
-            else:
-                labels = None
-            results = self.evaluate(nlt_emb, cmt_emb, labels)
-            batch_results.append(results)
-            
-        results = {}
-        for key in batch_results[0]:
-            results[key] = np.mean([result[key] for result in batch_results])
-        return results
-
-    def evaluate(self, nlt_emb: torch.Tensor, cmt_emb: torch.Tensor,
+    def evaluate_all(self, nlt_emb: torch.Tensor, cmt_emb: torch.Tensor,
                      labels: Optional[np.ndarray] = None) -> Dict[str, float]:
         """
         Compute all evaluation metrics.
@@ -349,33 +315,28 @@ class NL2CMEvaluator:
         results = {}
 
         # Basic translation metrics
-        results['cosine_similarity'] = self.compute_cosine_similarity(nlt_emb.to(get_device()), cmt_emb.to(get_device()))
+        results['cosine_similarity'] = self.compute_cosine_similarity(
+            nlt_emb, cmt_emb)
 
         # Retrieval metrics
-        retrieval_metrics = self.compute_retrieval_metrics(nlt_emb.to(get_device()), cmt_emb.to(get_device()))
+        retrieval_metrics = self.compute_retrieval_metrics(nlt_emb, cmt_emb)
         results.update(retrieval_metrics)
 
         # Cycle consistency metrics
-        cycle_metrics = self.compute_cycle_consistency_metrics(nlt_emb.to(get_device()), cmt_emb.to(get_device()))
+        cycle_metrics = self.compute_cycle_consistency_metrics(
+            nlt_emb, cmt_emb)
         results.update(cycle_metrics)
 
         # Geometry preservation metrics
-        geometry_metrics = self.compute_geometry_preservation_metrics(nlt_emb.to(get_device()), cmt_emb.to(get_device()))
+        geometry_metrics = self.compute_geometry_preservation_metrics(
+            nlt_emb, cmt_emb)
         results.update(geometry_metrics)
 
         # Classification metrics (if labels provided)
         if labels is not None:
-            classification_metrics = self.compute_classification_metrics(nlt_emb.to(get_device()), cmt_emb.to(get_device()), labels)
+            classification_metrics = self.compute_classification_metrics(
+                nlt_emb, cmt_emb, labels)
             results.update(classification_metrics)
-
-        # Log to TensorBoard
-        if self.tensorboard_logger:
-            self.tensorboard_logger.log_evaluation_metrics(results, prefix="Final_Evaluation")
-
-            # Log translation examples
-            with torch.no_grad():
-                translated_emb = self.model.translate_nlt_to_cmt(nlt_emb.to(get_device()))
-                self.tensorboard_logger.log_translation_examples(nlt_emb.to(get_device()), cmt_emb.to(get_device()), translated_emb.to(get_device()))
 
         return results
 

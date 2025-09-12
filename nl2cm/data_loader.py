@@ -5,14 +5,13 @@ This module handles loading and preprocessing of Natural Language (NL) and Conce
 embeddings for the NL2CM translation task, following the vec2vec approach.
 """
 
+import pickle
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Optional
 import random
 from sklearn.model_selection import train_test_split
-
-from nl2cm.embed import get_embeddings
 
 
 class NL2CMDataset(Dataset):
@@ -89,10 +88,8 @@ class PairedNL2CMDataset(Dataset):
     This dataset provides paired NL and CM embeddings for evaluation purposes.
     """
 
-    def __init__(self, nlt_embeddings: np.ndarray, 
-        cmt_embeddings: np.ndarray, normalize: bool = True,
-        shuffle: bool = True
-    ):
+    def __init__(self, nlt_embeddings: np.ndarray, cmt_embeddings: np.ndarray,
+                 normalize: bool = True):
         """
         Initialize the paired dataset.
 
@@ -130,8 +127,8 @@ class PairedNL2CMDataset(Dataset):
         }
 
 
-def load_nl2cm_data(data_path: str, nl_cm_cols: list[str], test_size: float = 0.2, batch_size: int = 32, num_workers: int = 4,
-                    random_state: int = 42, limit: int = None) -> Tuple[DataLoader, DataLoader, DataLoader]:
+def load_nl2cm_data(data_path: str, test_size: float = 0.2,
+                    random_state: int = 42) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
     Load NL2CM data and create train/validation/test splits.
 
@@ -144,7 +141,12 @@ def load_nl2cm_data(data_path: str, nl_cm_cols: list[str], test_size: float = 0.
         Tuple of (train_loader, val_loader, test_loader)
     """
     # Load the dataframe
-    nlt_embeddings, cmt_embeddings = get_embeddings(data_path, nl_cm_cols, limit=limit)
+    with open(data_path, 'rb') as f:
+        df = pickle.load(f)
+
+    # Extract embeddings
+    nlt_embeddings = np.stack(df['NL_Serialization_Emb'].values)
+    cmt_embeddings = np.stack(df['CM_Serialization_Emb'].values)
 
     print(
         f"Loaded {len(nlt_embeddings)} NL embeddings and {len(cmt_embeddings)} CM embeddings")
@@ -169,21 +171,16 @@ def load_nl2cm_data(data_path: str, nl_cm_cols: list[str], test_size: float = 0.
 
     # Create data loaders
     train_loader = DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size,
-                            shuffle=False, num_workers=num_workers)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size,
-                             shuffle=False, num_workers=num_workers)
+        train_dataset, batch_size=32, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=32,
+                            shuffle=False, num_workers=4)
+    test_loader = DataLoader(test_dataset, batch_size=32,
+                             shuffle=False, num_workers=4)
 
-    return {
-        'train_loader': train_loader,
-        'val_loader': val_loader,
-        'test_loader': test_loader,
-        'embedding_dim': nlt_embeddings.shape[1]
-    }
+    return train_loader, val_loader, test_loader
 
 
-def create_evaluation_splits(data_path: str, nl_cm_cols: list[str], n_eval_samples: int = 1000, limit: int = None) -> Tuple[np.ndarray, np.ndarray]:
+def create_evaluation_splits(data_path: str, n_eval_samples: int = 1000) -> Tuple[np.ndarray, np.ndarray]:
     """
     Create evaluation splits for computing vec2vec-style metrics.
 
@@ -194,7 +191,12 @@ def create_evaluation_splits(data_path: str, nl_cm_cols: list[str], n_eval_sampl
     Returns:
         Tuple of (nlt_eval, cmt_eval) arrays
     """
-    nlt_embeddings, cmt_embeddings = get_embeddings(data_path, nl_cm_cols, limit=limit)
+    with open(data_path, 'rb') as f:
+        df = pickle.load(f)
+
+    # Extract embeddings
+    nlt_embeddings = np.stack(df['NL_Serialization_Emb'].values)
+    cmt_embeddings = np.stack(df['CM_Serialization_Emb'].values)
 
     # Sample for evaluation
     n_samples = min(n_eval_samples, len(nlt_embeddings))
@@ -202,5 +204,11 @@ def create_evaluation_splits(data_path: str, nl_cm_cols: list[str], n_eval_sampl
 
     nlt_eval = nlt_embeddings[indices]
     cmt_eval = cmt_embeddings[indices]
+
+    # Normalize
+    nlt_eval = nlt_eval / \
+        (np.linalg.norm(nlt_eval, axis=1, keepdims=True) + 1e-8)
+    cmt_eval = cmt_eval / \
+        (np.linalg.norm(cmt_eval, axis=1, keepdims=True) + 1e-8)
 
     return nlt_eval, cmt_eval
