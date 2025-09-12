@@ -168,6 +168,10 @@ def get_embeddings(data_path, nl_cm_cols, limit=None) -> tuple[np.ndarray, np.nd
     assert isinstance(nl_cm_cols, list), f"NL and CM columns must be a list, got {type(nl_cm_cols)}"
     assert len(nl_cm_cols) == 2, f"NL and CM columns must be a list of length 2, got {len(nl_cm_cols)}"
     
+    if os.path.exists(os.path.join(data_path, "full_embeddings_df.pkl")):
+        with open(os.path.join(data_path, "full_embeddings_df.pkl"), "rb") as f:
+            data = pickle.load(f)
+            return data['nl_emb'], data['cm_emb']
     
     total_count = dict()
     total_nl_count = dict()
@@ -202,5 +206,8 @@ def get_embeddings(data_path, nl_cm_cols, limit=None) -> tuple[np.ndarray, np.nd
     
     print("Size of NLT_EMB: ", NLT_EMB.shape)
     print("Size of CM_EMB: ", CM_EMB.shape)
+    
+    with open(os.path.join(data_path, "full_embeddings_df.pkl"), "wb") as f:
+        pickle.dump({'nl_emb': NLT_EMB, 'cm_emb': CM_EMB}, f)
      
     return NLT_EMB, CM_EMB

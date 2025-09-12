@@ -139,8 +139,9 @@ def get_data_embeddings_dimension(data_path: str, nl_cm_cols: list[str]) -> int:
     return nlt_embeddings.shape[1]
 
 
-def load_nl2cm_data(data_path: str, nl_cm_cols: list[str], test_size: float = 0.2, batch_size: int = 32, num_workers: int = 4,
-                    random_state: int = 42, limit: int = None) -> Tuple[DataLoader, DataLoader, DataLoader]:
+def load_nl2cm_data(data_path: str, nl_cm_cols: list[str], test_size: float = 0.2, 
+                    batch_size: int = 32, num_workers: int = 4,
+                    random_state: int = 42, limit: int = None) -> Dict[str, DataLoader]:
     """
     Load NL2CM data and create train/validation/test splits.
 
