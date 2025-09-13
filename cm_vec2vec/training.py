@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 import numpy as np
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
+from cm_vec2vec.evaluation import CMVec2VecEvaluator
 from cm_vec2vec.translators.cm_vec2vec_translator import CMVec2VecTranslator
 from cm_vec2vec.losses import compute_all_losses, discriminator_loss
 from cm_vec2vec.utils import get_device
@@ -34,7 +35,8 @@ class CMVec2VecTrainer:
         max_grad_norm: float = 1.0,
         use_scheduler: bool = True,
         warmup_steps: int = 1000,
-        save_dir: str = 'logs/cm_vec2vec'
+        save_dir: str = 'logs/cm_vec2vec',
+        evaluator: Optional[CMVec2VecEvaluator] = None
     ):
         """
         Initialize the trainer.
@@ -57,7 +59,7 @@ class CMVec2VecTrainer:
         self.max_grad_norm = max_grad_norm
         self.use_scheduler = use_scheduler
         self.warmup_steps = warmup_steps
-
+        self.evaluator = evaluator
         # Default loss weights
         self.loss_weights = loss_weights or {
             'reconstruction': 15.0,
@@ -240,7 +242,7 @@ class CMVec2VecTrainer:
             Dictionary of validation losses
         """
         self.model.eval()
-        total_losses = {}
+        total_scores = {}
         num_batches = 0
 
         with torch.no_grad():
@@ -282,14 +284,21 @@ class CMVec2VecTrainer:
 
                 # Accumulate losses
                 for key, value in losses.items():
-                    if key not in total_losses:
-                        total_losses[key] = 0.0
-                    total_losses[key] += value.item() if torch.is_tensor(value) else value
+                    if key not in total_scores:
+                        total_scores[key] = 0.0
+                    total_scores[key] += value.item() if torch.is_tensor(value) else value
+
+                if self.evaluator is not None:
+                    metrics = self.evaluator.evaluate_batch(batch, condition)
+                    for key, value in metrics.items():
+                        if key not in total_scores:
+                            total_scores[key] = 0.0
+                        total_scores[key] += value
 
                 num_batches += 1
 
         # Average losses
-        avg_losses = {k: v / num_batches for k, v in total_losses.items()}
+        avg_losses = {k: v / num_batches for k, v in total_scores.items()}
         return avg_losses
 
     def train(

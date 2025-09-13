@@ -15,7 +15,7 @@ def test_end_to_end():
     args = parse_args()
     print("CMVec2Vec End-to-End Test")
     print("=" * 50)
-    data_path = os.path.join(args.data_path, args.dataset_name)
+    data_path = os.path.join(args.data_path, args.dataset)
     nl_cm_cols = [args.nl_col, args.cm_col]
 
     # Test data loading
@@ -57,6 +57,9 @@ def test_end_to_end():
 
     # Test trainer creation
     print("\n3. Testing trainer creation...")
+    save_dir = os.path.join(args.save_dir, args.dataset)
+    os.makedirs(save_dir, exist_ok=True)
+    evaluator = CMVec2VecEvaluator(model, save_dir=save_dir)
     trainer = CMVec2VecTrainer(
         model=model,
         lr_generator=args.lr_generator,
@@ -68,35 +71,45 @@ def test_end_to_end():
             'adversarial': args.adversarial_weight,
             'latent_adversarial': args.latent_adversarial_weight
         },
-        save_dir=args.save_dir
+        save_dir=save_dir,
+        evaluator=evaluator
     )
 
-    print("   ✓ Trainer creation successful!")
+    print("   ✓ Trainer and evaluator creation successful!")
+    print("Loss Weights:")
+    print(f"   Reconstruction: {args.reconstruction_weight}")
+    print(f"   Cycle Consistency: {args.cycle_consistency_weight}")
+    print(f"   VSP: {args.vsp_weight}")
+    print(f"   Adversarial: {args.adversarial_weight}")
+    print(f"   Latent Adversarial: {args.latent_adversarial_weight}")
 
     # Test training step
     print("\n4. Testing training step...")
-    trainer.train(train_loader, val_loader)
+    trainer.train(
+        train_loader, val_loader, epochs=args.epochs,
+        save_every=args.save_every, 
+        early_stopping_patience=args.early_stopping_patience
+    )
 
-    print("   ✓ Training step successful!")
+    print("   ✓ Training successful!")
 
     # Test validation
     print("\n5. Testing validation...")
     val_losses = trainer.validate(val_loader)
     print(f"   Validation losses: {val_losses}")
-    print("   ✓ Validation successful!")
+    print(f"   ✓ Validation successful! with losses: {val_losses}")
 
     # Test evaluation
     print("\n6. Testing evaluation...")
-    evaluator = CMVec2VecEvaluator(model)
+    
     results = evaluator.evaluate_loader(test_loader)
     print(f"   Evaluation results: {results}")
-    save_dir = os.path.join(args.save_dir, args.dataset_name)
-    with open(os.path.join(save_dir, f'evaluation_results_{args.dataset_name}.json'), 'w') as f:
+    with open(os.path.join(save_dir, f'evaluation_results.json'), 'w') as f:
         json.dump(results, f)
 
     print("   Evaluation table created successfully")
 
-    print("   ✓ Evaluation successful!")
+    print(f"   ✓ Evaluation successful! with results: {results}")
 
     # Test translation
 

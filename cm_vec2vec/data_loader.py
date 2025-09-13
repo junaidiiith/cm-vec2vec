@@ -130,8 +130,10 @@ class PairedNL2CMDataset(Dataset):
         }
 
 
-def load_nl2cm_data(data_path: str, nl_cm_cols: list[str], test_size: float = 0.2,
-                    random_state: int = 42, batch_size: int = 128, num_workers: int = 4) -> Tuple[DataLoader, DataLoader, DataLoader]:
+def load_nl2cm_data(
+    data_path: str, nl_cm_cols: list[str], test_size: float = 0.2, 
+    batch_size: int = 128, num_workers: int = 4, limit: int = None,
+    random_state: int = 42) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
     Load NL2CM data and create train/validation/test splits.
 
@@ -144,8 +146,7 @@ def load_nl2cm_data(data_path: str, nl_cm_cols: list[str], test_size: float = 0.
         Tuple of (train_loader, val_loader, test_loader)
     """
     # Load the dataframe
-    nlt_embeddings, cmt_embeddings = get_embeddings(data_path, nl_cm_cols)
-
+    nlt_embeddings, cmt_embeddings = get_embeddings(data_path, nl_cm_cols, limit)
     print(
         f"Loaded {len(nlt_embeddings)} NL embeddings and {len(cmt_embeddings)} CM embeddings")
     print(f"Embedding dimension: {nlt_embeddings.shape[1]}")
@@ -157,9 +158,9 @@ def load_nl2cm_data(data_path: str, nl_cm_cols: list[str], test_size: float = 0.
                                            random_state=random_state)
 
     # Further split training data for validation
-    train_nlt, val_nlt = train_test_split(train_nlt, test_size=0.1,
+    train_nlt, val_nlt = train_test_split(train_nlt, test_size=0.2,
                                           random_state=random_state)
-    train_cmt, val_cmt = train_test_split(train_cmt, test_size=0.1,
+    train_cmt, val_cmt = train_test_split(train_cmt, test_size=0.2,
                                           random_state=random_state)
 
     # Create datasets

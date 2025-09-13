@@ -10,7 +10,8 @@ from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
-
+from tqdm.auto import tqdm
+from torch.utils.tensorboard import SummaryWriter
 from cm_vec2vec.translators.cm_vec2vec_translator import CMVec2VecTranslator
 from cm_vec2vec.utils import get_device
 
@@ -23,7 +24,7 @@ class CMVec2VecEvaluator:
     cycle consistency, geometry preservation, and clustering metrics.
     """
 
-    def __init__(self, model: CMVec2VecTranslator):
+    def __init__(self, model: CMVec2VecTranslator, save_dir: str = 'logs/cm_vec2vec'):
         """
         Initialize the evaluator.
 
@@ -34,7 +35,8 @@ class CMVec2VecEvaluator:
         self.device = get_device()
         self.model.to(self.device)
         self.model.eval()
-    
+        self.save_dir = save_dir
+        self.writer = SummaryWriter(save_dir)
     
     def _get_batch_embeddings(self, batch: Dict[str, torch.Tensor], key: str, translate_fn: Callable) -> torch.Tensor:
             condition = batch.get('condition', None)
@@ -446,15 +448,16 @@ class CMVec2VecEvaluator:
         """
         Evaluate a loader of embeddings.
         """
-        results = {}
-        for batch in loader:
+        batch_results = {}
+        for batch in tqdm(loader, desc="Evaluating Test Set"):
             result = self.evaluate_batch(batch, condition)
             for key, value in result.items():
-                results[key] = results.get(key, []) + [value]
-        
-        for key, value in results.items():
-            results[key] = np.mean(value)
-        return results
+                batch_results[key] = [value] if key not in batch_results else batch_results[key] + [value]
+                
+        for key, value in batch_results.items():
+            batch_results[key] = np.mean(value)
+            
+        return batch_results
 
     def create_evaluation_table(
         self,

@@ -5,6 +5,7 @@ This script tests the complete NL2CM pipeline on the provided embeddings.
 It demonstrates the entire workflow from data loading to evaluation.
 """
 
+import json
 from nl2cm.parse_args import parse_args
 from nl2cm.evaluation import NL2CMEvaluator
 from nl2cm.training import NL2CMTrainer
@@ -14,12 +15,7 @@ from nl2cm.embed import get_embedding_dim
 import os
 import sys
 import torch
-import numpy as np
-import pickle
 from pathlib import Path
-
-# Add the current directory to Python path
-sys.path.append(str(Path(__file__).parent))
 
 
 def test_data_loading():
@@ -27,12 +23,17 @@ def test_data_loading():
     print("=" * 60)
     print("Testing Data Loading")
     print("=" * 60)
+    
+    args = parse_args()
 
     # Load the dataframe
-    data_path = os.path.join("datasets", "embeddings-dfs", "bpmn", "full_embeddings_df.pkl")
+    data_path = os.path.join("datasets", "embeddings-dfs", args.dataset)
     # Test data loaders
+    nl_cm_cols = [args.nl_col, args.cm_col]
     train_loader, val_loader, test_loader = load_nl2cm_data(
-        data_path, test_size=0.2)
+        data_path, nl_cm_cols, test_size=0.2, batch_size=args.batch_size, 
+        num_workers=args.num_workers, limit=args.limit
+    )
 
     print(f"Train batches: {len(train_loader)}")
     print(f"Val batches: {len(val_loader)}")
@@ -108,7 +109,6 @@ def test_training(model, device, embedding_dim):
     # Create trainer
     trainer = NL2CMTrainer(
         model=model,
-        device=device,
         lr_generator=1e-4,
         lr_discriminator=4e-4,
         lambda_rec=15.0,
@@ -151,8 +151,10 @@ def test_evaluation(model, device, embedding_dim):
     print("Testing Evaluation")
     print("=" * 60)
 
+    args = parse_args()
+
     # Create evaluator
-    evaluator = NL2CMEvaluator(model, device)
+    evaluator = NL2CMEvaluator(model, save_dir=args.save_dir)
 
     # Create dummy evaluation data
     nlt_eval = torch.randn(50, embedding_dim).to(device)
@@ -188,13 +190,13 @@ def test_full_pipeline():
 
     # Load real data
     args = parse_args()
-    data_path = os.path.join("datasets", "embeddings-dfs", "bpmn")
+    data_path = os.path.join("datasets", "embeddings-dfs", args.dataset)
     nl_cm_cols = [args.nl_col, args.cm_col]
     train_loader, val_loader, test_loader = load_nl2cm_data(
         data_path, nl_cm_cols, test_size=0.2, batch_size=args.batch_size, num_workers=args.num_workers, limit=args.limit)
 
     # Create model
-    embedding_dim = 1536
+    embedding_dim = get_embedding_dim(data_path)
     model = NL2CMTranslator(
         embedding_dim=embedding_dim,
         latent_dim=args.latent_dim,
@@ -210,14 +212,14 @@ def test_full_pipeline():
     # Create trainer
     trainer = NL2CMTrainer(
         model=model,
-        device=device,
-        lr_generator=1e-4,
-        lr_discriminator=4e-4,
+        lr_generator=args.lr_generator,
+        lr_discriminator=args.lr_discriminator,
         lambda_rec=args.lambda_rec,
         lambda_cyc=args.lambda_cyc,
         lambda_vsp=args.lambda_vsp,
         lambda_adv=args.lambda_adv,
-        lambda_latent=args.lambda_latent
+        lambda_latent=args.lambda_latent,
+        save_dir=args.save_dir
     )
 
     # Train for a few epochs
@@ -226,19 +228,23 @@ def test_full_pipeline():
         train_loader=train_loader,
         val_loader=val_loader,
         epochs=args.epochs,
-        save_dir=args.save_dir,
         save_every=args.save_every,
         early_stopping_patience=args.early_stopping_patience
     )
 
     # Evaluate on test data
     print("Evaluating on test data...")
-    evaluator = NL2CMEvaluator(model, device)
+    evaluator = NL2CMEvaluator(model, save_dir=args.save_dir)
 
     results = evaluator.evaluate_loader(test_loader)
 
     # Print results
     print("\n" + evaluator.create_evaluation_table(results))
+
+    save_dir = os.path.join(args.save_dir, args.dataset)
+    os.makedirs(save_dir, exist_ok=True)
+    with open(os.path.join(save_dir, f'evaluation_results_{args.dataset}.json'), 'w') as f:
+        json.dump(results, f)
 
     print("✓ Full pipeline test passed\n")
 
