@@ -12,8 +12,9 @@ from torch.utils.data import Dataset, DataLoader
 from typing import Tuple, Dict
 import random
 from sklearn.model_selection import train_test_split
+import os
 
-from nl2cm.embed import get_embeddings
+from cm_vec2vec.embed import get_embeddings
 
 
 class NL2CMDataset(Dataset):
@@ -129,10 +130,8 @@ class PairedNL2CMDataset(Dataset):
         }
 
 
-def load_nl2cm_data(
-    data_path: str, nl_cm_cols: list[str], test_size: float = 0.2, 
-    batch_size: int = 128, num_workers: int = 4, limit: int = None,
-    random_state: int = 42) -> Tuple[DataLoader, DataLoader, DataLoader]:
+def load_nl2cm_data(data_path: str, nl_cm_cols: list[str], test_size: float = 0.2,
+                    random_state: int = 42, batch_size: int = 128, num_workers: int = 4) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
     Load NL2CM data and create train/validation/test splits.
 
@@ -145,7 +144,8 @@ def load_nl2cm_data(
         Tuple of (train_loader, val_loader, test_loader)
     """
     # Load the dataframe
-    nlt_embeddings, cmt_embeddings = get_embeddings(data_path, nl_cm_cols, limit)
+    nlt_embeddings, cmt_embeddings = get_embeddings(data_path, nl_cm_cols)
+
     print(
         f"Loaded {len(nlt_embeddings)} NL embeddings and {len(cmt_embeddings)} CM embeddings")
     print(f"Embedding dimension: {nlt_embeddings.shape[1]}")
@@ -157,9 +157,9 @@ def load_nl2cm_data(
                                            random_state=random_state)
 
     # Further split training data for validation
-    train_nlt, val_nlt = train_test_split(train_nlt, test_size=0.2,
+    train_nlt, val_nlt = train_test_split(train_nlt, test_size=0.1,
                                           random_state=random_state)
-    train_cmt, val_cmt = train_test_split(train_cmt, test_size=0.2,
+    train_cmt, val_cmt = train_test_split(train_cmt, test_size=0.1,
                                           random_state=random_state)
 
     # Create datasets
@@ -178,35 +178,11 @@ def load_nl2cm_data(
     return train_loader, val_loader, test_loader
 
 
-def create_evaluation_splits(data_path: str, n_eval_samples: int = 1000) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Create evaluation splits for computing vec2vec-style metrics.
-
-    Args:
-        data_path: Path to the pickle file containing the dataframe
-        n_eval_samples: Number of samples to use for evaluation
-
-    Returns:
-        Tuple of (nlt_eval, cmt_eval) arrays
-    """
-    with open(data_path, 'rb') as f:
-        df = pickle.load(f)
-
-    # Extract embeddings
-    nlt_embeddings = np.stack(df['NL_Serialization_Emb'].values)
-    cmt_embeddings = np.stack(df['CM_Serialization_Emb'].values)
-
-    # Sample for evaluation
-    n_samples = min(n_eval_samples, len(nlt_embeddings))
-    indices = np.random.choice(len(nlt_embeddings), n_samples, replace=False)
-
-    nlt_eval = nlt_embeddings[indices]
-    cmt_eval = cmt_embeddings[indices]
-
-    # Normalize
-    nlt_eval = nlt_eval / \
-        (np.linalg.norm(nlt_eval, axis=1, keepdims=True) + 1e-8)
-    cmt_eval = cmt_eval / \
-        (np.linalg.norm(cmt_eval, axis=1, keepdims=True) + 1e-8)
-
-    return nlt_eval, cmt_eval
+def get_embedding_dim(data_path) -> int:
+    if os.path.exists(os.path.join(data_path, "full_embeddings_df.pkl")):
+        with open(os.path.join(data_path, "full_embeddings_df.pkl"), "rb") as f:
+            data = pickle.load(f)
+            return data['nl_emb'].shape[1]
+    with open(os.path.join(data_path, [f for f in os.listdir(data_path) if f.endswith(".pkl")][0]), "rb") as f:
+        data = pickle.load(f)
+        return data['NL_Serialization_Emb_openai'].shape[1]

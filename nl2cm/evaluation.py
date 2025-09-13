@@ -12,15 +12,13 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from typing import Dict, List, Optional
+from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
-from sklearn.metrics import (
-    adjusted_rand_score, 
-    normalized_mutual_info_score
-)
-from nl2cm.utils import get_device
 from torch.utils.data import DataLoader
-from tqdm.auto import tqdm
+from torch.utils.tensorboard import SummaryWriter
+
+from nl2cm.utils import get_device
 
 
 class NL2CMEvaluator:
@@ -31,19 +29,24 @@ class NL2CMEvaluator:
     evaluation metrics for the NL2CM task.
     """
 
-    def __init__(self, model: torch.nn.Module):
+    def __init__(self, model: torch.nn.Module, save_dir: str = 'logs/nl2cm'):
         """
         Initialize the evaluator.
 
         Args:
             model: The trained NL2CM model
+            device: Device to run evaluation on
         """
-        self.model = model.to(get_device())
+        self.save_dir = save_dir
+        self.writer = SummaryWriter(log_dir=save_dir)
+        device = get_device()
+        
+        self.model = model.to(device)
+        self.device = device
         self.model.eval()
 
-    def compute_cosine_similarity(
-        self, nlt_emb: torch.Tensor,
-        cmt_emb: torch.Tensor) -> float:
+    def compute_cosine_similarity(self, nlt_emb: torch.Tensor,
+                                  cmt_emb: torch.Tensor) -> float:
         """
         Compute mean cosine similarity between translated and target embeddings.
 
@@ -62,7 +65,6 @@ class NL2CMEvaluator:
             similarities = F.cosine_similarity(translated, cmt_emb, dim=1)
 
             return similarities.mean().item()
-
 
     def compute_top_k_accuracy(self, nlt_emb: torch.Tensor, cmt_emb: torch.Tensor,
                                k: int = 1) -> float:
@@ -94,7 +96,6 @@ class NL2CMEvaluator:
                     correct += 1
 
             return correct / len(nlt_emb)
-
 
     def compute_mean_rank(self, nlt_emb: torch.Tensor, cmt_emb: torch.Tensor) -> float:
         """
@@ -128,7 +129,6 @@ class NL2CMEvaluator:
                     ranks.append(rank)
 
             return np.mean(ranks) if ranks else float('inf')
-
 
     def compute_retrieval_metrics(self, nlt_emb: torch.Tensor, cmt_emb: torch.Tensor) -> Dict[str, float]:
         """
@@ -184,10 +184,8 @@ class NL2CMEvaluator:
 
             return metrics
 
-
-    def compute_cycle_consistency_metrics(
-        self, nlt_emb: torch.Tensor,
-        cmt_emb: torch.Tensor) -> Dict[str, float]:
+    def compute_cycle_consistency_metrics(self, nlt_emb: torch.Tensor,
+                                          cmt_emb: torch.Tensor) -> Dict[str, float]:
         """
         Compute cycle consistency metrics.
 
@@ -219,10 +217,8 @@ class NL2CMEvaluator:
                 'mean_cycle_similarity': (nlt_cycle_sim + cmt_cycle_sim) / 2
             }
 
-
-    def compute_geometry_preservation_metrics(
-        self, nlt_emb: torch.Tensor,
-        cmt_emb: torch.Tensor) -> Dict[str, float]:
+    def compute_geometry_preservation_metrics(self, nlt_emb: torch.Tensor,
+                                              cmt_emb: torch.Tensor) -> Dict[str, float]:
         """
         Compute geometry preservation metrics.
 
@@ -260,10 +256,8 @@ class NL2CMEvaluator:
                 'mean_geometry_correlation': (nlt_corr + cmt_corr) / 2
             }
 
-
-    def compute_classification_metrics(
-        self, nlt_emb: torch.Tensor, cmt_emb: torch.Tensor,
-        labels: np.ndarray) -> Dict[str, float]:
+    def compute_classification_metrics(self, nlt_emb: torch.Tensor, cmt_emb: torch.Tensor,
+                                       labels: np.ndarray) -> Dict[str, float]:
         """
         Compute classification metrics using clustering.
 
@@ -271,7 +265,7 @@ class NL2CMEvaluator:
             nlt_emb: NL embeddings (N, d)
             cmt_emb: CM embeddings (N, d)
             labels: Ground truth labels (N,)
-        
+
         Returns:
             Dictionary of classification metrics
         """
@@ -311,24 +305,6 @@ class NL2CMEvaluator:
                 'ari_improvement': trans_ari - orig_ari,
                 'nmi_improvement': trans_nmi - orig_nmi
             }
-    
-    
-    def evaluate_data_loader(self, data_loader: DataLoader) -> Dict[str, float]:
-        """
-        Evaluate the model on a dataloader
-        """
-        results = dict()
-        for batch in tqdm(data_loader, desc='Evaluating data loader'):
-            batch_results = self.evaluate(batch['nlt'].to(get_device()), batch['cmt'].to(get_device()))
-            for key, value in batch_results.items():
-                if key not in results:
-                    results[key] = list()
-                results[key].append(value)
-                
-        for key, values in results.items():
-            results[key] = np.mean(values)
-        return results
-
 
     def evaluate(self, nlt_emb: torch.Tensor, cmt_emb: torch.Tensor,
                      labels: Optional[np.ndarray] = None) -> Dict[str, float]:
@@ -343,30 +319,47 @@ class NL2CMEvaluator:
         Returns:
             Dictionary of all metrics
         """
-        results = dict()
+        results = {}
 
         # Basic translation metrics
-        results['cosine_similarity'] = self.compute_cosine_similarity(nlt_emb, cmt_emb)
+        results['cosine_similarity'] = self.compute_cosine_similarity(
+            nlt_emb, cmt_emb)
 
         # Retrieval metrics
         retrieval_metrics = self.compute_retrieval_metrics(nlt_emb, cmt_emb)
         results.update(retrieval_metrics)
 
         # Cycle consistency metrics
-        cycle_metrics = self.compute_cycle_consistency_metrics(nlt_emb, cmt_emb)
+        cycle_metrics = self.compute_cycle_consistency_metrics(
+            nlt_emb, cmt_emb)
         results.update(cycle_metrics)
 
         # Geometry preservation metrics
-        geometry_metrics = self.compute_geometry_preservation_metrics(nlt_emb, cmt_emb)
+        geometry_metrics = self.compute_geometry_preservation_metrics(
+            nlt_emb, cmt_emb)
         results.update(geometry_metrics)
 
         # Classification metrics (if labels provided)
         if labels is not None:
-            classification_metrics = self.compute_classification_metrics(nlt_emb, cmt_emb, labels)
+            classification_metrics = self.compute_classification_metrics(
+                nlt_emb, cmt_emb, labels)
             results.update(classification_metrics)
 
         return results
 
+    def evaluate_loader(self, loader: DataLoader) -> Dict[str, float]:
+        """
+        Evaluate the model on a loader of data.
+        """
+        results = {}
+        for batch in loader:
+            results = self.evaluate(batch['nlt'], batch['cmt'], batch['labels'])
+            for key, value in results.items():
+                results[key] = results.get(key, []) + [value]
+        
+        for key, value in results.items():
+            results[key] = np.mean(value)
+        return results
 
     def create_evaluation_table(self, results: Dict[str, float]) -> str:
         """
@@ -420,7 +413,6 @@ class NL2CMEvaluator:
 
         return table
 
-
     def plot_training_curves(self, train_losses: List[Dict], val_losses: List[Dict],
                              save_path: Optional[str] = None):
         """
@@ -466,7 +458,6 @@ class NL2CMEvaluator:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
 
         plt.show()
-
 
     def save_results(self, results: Dict[str, float], save_path: str):
         """

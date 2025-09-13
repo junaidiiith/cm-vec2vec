@@ -5,18 +5,21 @@ This script tests the complete NL2CM pipeline on the provided embeddings.
 It demonstrates the entire workflow from data loading to evaluation.
 """
 
-import json
-import sys
-import torch
-import os
-from tqdm.auto import tqdm
-
+from nl2cm.parse_args import parse_args
 from nl2cm.evaluation import NL2CMEvaluator
 from nl2cm.training import NL2CMTrainer
 from nl2cm.model import NL2CMTranslator
-from nl2cm.data_loader import get_data_embeddings_dimension, load_nl2cm_data
-from nl2cm.utils import get_device
-from nl2cm.parse_args import parse_args
+from nl2cm.data_loader import load_nl2cm_data
+from nl2cm.embed import get_embedding_dim
+import os
+import sys
+import torch
+import numpy as np
+import pickle
+from pathlib import Path
+
+# Add the current directory to Python path
+sys.path.append(str(Path(__file__).parent))
 
 
 def test_data_loading():
@@ -24,29 +27,13 @@ def test_data_loading():
     print("=" * 60)
     print("Testing Data Loading")
     print("=" * 60)
-    args = parse_args()
-    data_path = os.path.join(args.data_path, args.dataset)
-    nl_cm_cols = [args.nl_col, args.cm_col]
-    test_size = args.test_size
-    limit = args.limit
-    batch_size = args.batch_size
-    num_workers = args.num_workers
 
+    # Load the dataframe
+    data_path = os.path.join("datasets", "embeddings-dfs", "bpmn", "full_embeddings_df.pkl")
     # Test data loaders
-    data = load_nl2cm_data(
-        data_path, 
-        nl_cm_cols, 
-        test_size=test_size, 
-        limit=limit, 
-        batch_size=batch_size, 
-        num_workers=num_workers
-    )
-    embedding_dim = get_data_embeddings_dimension(data_path, nl_cm_cols)
-    train_loader = data['train_loader']
-    val_loader = data['val_loader']
-    test_loader = data['test_loader']
-    
-    print(f"Embedding dimension: {embedding_dim}")
+    train_loader, val_loader, test_loader = load_nl2cm_data(
+        data_path, test_size=0.2)
+
     print(f"Train batches: {len(train_loader)}")
     print(f"Val batches: {len(val_loader)}")
     print(f"Test batches: {len(test_loader)}")
@@ -58,39 +45,24 @@ def test_data_loading():
     print(f"CM batch shape: {batch['cmt'].shape}")
 
     print("✓ Data loading test passed\n")
+    embedding_dim = get_embedding_dim(data_path)
     return embedding_dim
 
 
-def test_model_creation(args=None):
+def test_model_creation(embedding_dim):
     """Test model creation and forward pass."""
     print("=" * 60)
     print("Testing Model Creation")
     print("=" * 60)
 
-    args = parse_args() if args is None else args
-    data_path = os.path.join(args.data_path, args.dataset)
-    nl_cm_cols = [args.nl_col, args.cm_col]
-    batch_size = args.batch_size
-    latent_dim = args.latent_dim
-    hidden_dim = args.hidden_dim
-    adapter_depth = args.adapter_depth
-    backbone_depth = args.backbone_depth
-    dropout = args.dropout
-    use_conditioning = args.use_conditioning
-    cond_dim = args.cond_dim
-
-    embedding_dim = get_data_embeddings_dimension(data_path, nl_cm_cols)
-
     # Create model
     model = NL2CMTranslator(
         embedding_dim=embedding_dim,
-        latent_dim=latent_dim,
+        latent_dim=256,
         hidden_dim=512,
-        adapter_depth=adapter_depth,
-        backbone_depth=backbone_depth,
-        dropout=dropout,
-        use_conditioning=use_conditioning,
-        cond_dim=cond_dim
+        adapter_depth=3,
+        backbone_depth=4,
+        dropout=0.1
     )
 
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
@@ -124,326 +96,102 @@ def test_model_creation(args=None):
     print(f"Translation CM to NL shape: {cmt_translated.shape}")
 
     print("✓ Model creation test passed\n")
-    return model
+    return model, device
 
-def test_training():
-    """Main training function."""
-    args = parse_args()
-    data_path = os.path.join(args.data_path, args.dataset)
-    nl_cm_cols = [args.nl_col, args.cm_col]
-    adapter_depth = args.adapter_depth
-    backbone_depth = args.backbone_depth
-    dropout = args.dropout
-    embedding_dim = get_data_embeddings_dimension(data_path, nl_cm_cols)
-    # Set device
-    device = get_device()
-    print(f"Using device: {device}")
 
-    # Create save directory
-    os.makedirs(args.save_dir, exist_ok=True)
-
-    # Save configuration
-    config_path = os.path.join(args.save_dir, 'config.json')
-    with open(config_path, 'w') as f:
-        json.dump(vars(args), f, indent=2)
-    print(f"Configuration saved to {config_path}")
-
-    # Load data
-    print("Loading data...")
-    data = load_nl2cm_data(
-        data_path, nl_cm_cols, 
-        args.test_size, args.random_state,
-        limit=args.limit, batch_size=args.batch_size, num_workers=args.num_workers
-    )
-    train_loader = data['train_loader']
-    val_loader = data['val_loader']
-    test_loader = data['test_loader']
-
-    print(f"Train batches: {len(train_loader)}")
-    print(f"Val batches: {len(val_loader)}")
-    print(f"Test batches: {len(test_loader)}")
-
-    # Create model
-    print("Creating model...")
-    model = NL2CMTranslator(
-        embedding_dim=embedding_dim,
-        latent_dim=args.latent_dim,
-        hidden_dim=args.hidden_dim,
-        adapter_depth=adapter_depth,
-        backbone_depth=backbone_depth,
-        dropout=dropout,
-        use_conditioning=args.use_conditioning,
-        cond_dim=args.cond_dim
-    )
-
-    print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+def test_training(model, device, embedding_dim):
+    """Test training functionality."""
+    print("=" * 60)
+    print("Testing Training")
+    print("=" * 60)
 
     # Create trainer
     trainer = NL2CMTrainer(
         model=model,
         device=device,
-        lr_generator=args.lr_generator,
-        lr_discriminator=args.lr_discriminator,
-        lambda_rec=args.lambda_rec,
-        lambda_cyc=args.lambda_cyc,
-        lambda_vsp=args.lambda_vsp,
-        lambda_adv=args.lambda_adv,
-        lambda_latent=args.lambda_latent,
-        weight_decay=args.weight_decay,
-        use_tensorboard=args.use_tensorboard,
-        log_dir=args.tensorboard_dir
+        lr_generator=1e-4,
+        lr_discriminator=4e-4,
+        lambda_rec=15.0,
+        lambda_cyc=15.0,
+        lambda_vsp=2.0,
+        lambda_adv=1.0,
+        lambda_latent=1.0
     )
 
-    # Create evaluator with TensorBoard logging
-    evaluator = NL2CMEvaluator(
-        model=model,
-        device=device,
-        use_tensorboard=args.use_tensorboard,
-        tensorboard_logger=trainer.tensorboard_logger
-    )
+    # Create dummy data loaders
+    from torch.utils.data import DataLoader, TensorDataset
+
+    nlt_data = torch.randn(100, embedding_dim)
+    cmt_data = torch.randn(100, embedding_dim)
+
+    train_dataset = TensorDataset(nlt_data, cmt_data)
+    val_dataset = TensorDataset(nlt_data[:20], cmt_data[:20])
+
+    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
+
+    # Test training step
+    batch = next(iter(train_loader))
+    batch = {'nlt': batch[0], 'cmt': batch[1]}
+
+    losses = trainer.train_step(batch)
+    print(f"Training step losses: {losses}")
+
+    # Test validation
+    val_losses = trainer.validate(val_loader)
+    print(f"Validation losses: {val_losses}")
+
+    print("✓ Training test passed\n")
+    return trainer
 
 
-    # Train model
-    print("Starting training...")
-    history = trainer.train(
-        train_loader=train_loader,
-        val_loader=val_loader,
-        epochs=args.epochs,
-        save_dir=args.save_dir,
-        save_every=args.save_every,
-        early_stopping_patience=args.early_stopping_patience
-    )
-
-    # Final evaluation
-    print("Performing final evaluation...")
-    # Create evaluation data
-    print("Creating evaluation data...")
-    results = evaluator.evaluate_data_loader(test_loader)
-
-    # Print results
-    print("\n" + "="*80)
-    print("FINAL EVALUATION RESULTS")
-    print("="*80)
-    print(evaluator.create_evaluation_table(results))
-
-    # Save results
-    results_path = os.path.join(args.save_dir, 'final_results.json')
-    evaluator.save_results(results, results_path)
-
-    # Plot training curves
-    plot_path = os.path.join(args.save_dir, 'training_curves.png')
-    evaluator.plot_training_curves(
-        history['train_losses'], history['val_losses'], plot_path)
-
-    # Save training history
-    history_path = os.path.join(args.save_dir, 'training_history.json')
-    with open(history_path, 'w') as f:
-        json.dump(history, f, indent=2)
-
-    # Close TensorBoard logger
-    trainer.close_tensorboard()
-
-    print(f"Training completed. Results saved to {args.save_dir}")
-    if args.use_tensorboard:
-        print(f"TensorBoard logs saved to {args.tensorboard_dir}")
-        print(
-            f"To view logs, run: tensorboard --logdir {args.tensorboard_dir}")
-
-def load_model(checkpoint_path: str) -> NL2CMTranslator:
-    """Load a trained model from checkpoint."""
-    checkpoint = torch.load(checkpoint_path, map_location=get_device())
-
-    # Extract model configuration from checkpoint
-    model_state = checkpoint['model_state_dict']
-
-    # Infer model configuration from state dict
-    embedding_dim = None
-    latent_dim = None
-
-    for key, value in model_state.items():
-        if 'nlt_adapter.network.0.weight' in key:
-            embedding_dim = value.shape[1]
-        elif 'nlt_adapter.network.0.weight' in key:
-            latent_dim = value.shape[0]
-
-    # Default values if not found
-    if embedding_dim is None:
-        embedding_dim = 1536
-    if latent_dim is None:
-        latent_dim = 256
-
-    # Create model
-    model = NL2CMTranslator(
-        embedding_dim=embedding_dim,
-        latent_dim=latent_dim,
-        hidden_dim=512,
-        adapter_depth=3,
-        backbone_depth=4,
-        dropout=0.1
-    )
-
-    # Load state dict
-    model.load_state_dict(model_state)
-    model.to(get_device())
-    model.eval()
-
-    return model
-
-
-def create_baseline_comparison(nlt_emb: torch.Tensor, cmt_emb: torch.Tensor) -> dict:
-    """Create baseline comparison results."""
-    # Identity baseline
-    identity_cosine = torch.nn.functional.cosine_similarity(
-        nlt_emb, cmt_emb, dim=1).mean().item()
-
-    # Random baseline (mean rank should be around N/2)
-    n_samples = len(nlt_emb)
-    random_mean_rank = n_samples / 2
-
-    return {
-        'identity_cosine_similarity': identity_cosine,
-        'random_mean_rank': random_mean_rank
-    }
-
-
-def create_evaluation_table(results: dict, baseline_results: dict) -> str:
-    """Create a comprehensive evaluation table."""
-    table = "=" * 100 + "\n"
-    table += "NL2CM Translation Evaluation Results\n"
-    table += "=" * 100 + "\n\n"
-
-    # Basic translation metrics
-    table += "Translation Quality Metrics:\n"
-    table += "-" * 50 + "\n"
-    table += f"{'Metric':<30} {'Value':<15} {'Baseline':<15} {'Improvement':<15}\n"
-    table += "-" * 50 + "\n"
-
-    cosine_sim = results.get('cosine_similarity', 0.0)
-    baseline_cosine = baseline_results.get('identity_cosine_similarity', 0.0)
-    cosine_improvement = cosine_sim - baseline_cosine
-
-    table += f"{'Cosine Similarity':<30} {cosine_sim:<15.4f} {baseline_cosine:<15.4f} {cosine_improvement:<15.4f}\n"
-
-    mean_rank = results.get('mean_rank', float('inf'))
-    baseline_rank = baseline_results.get('random_mean_rank', float('inf'))
-    rank_improvement = baseline_rank - \
-        mean_rank if mean_rank != float('inf') else 0
-
-    table += f"{'Mean Rank':<30} {mean_rank:<15.2f} {baseline_rank:<15.2f} {rank_improvement:<15.2f}\n"
-
-    top1 = results.get('top_1_accuracy', 0.0)
-    table += f"{'Top-1 Accuracy':<30} {top1:<15.4f} {'0.0000':<15} {top1:<15.4f}\n"
-
-    top5 = results.get('top_5_accuracy', 0.0)
-    table += f"{'Top-5 Accuracy':<30} {top5:<15.4f} {'0.0000':<15} {top5:<15.4f}\n"
-
-    mrr = results.get('mrr', 0.0)
-    table += f"{'MRR':<30} {mrr:<15.4f} {'0.0000':<15} {mrr:<15.4f}\n\n"
-
-    # Cycle consistency
-    table += "Cycle Consistency:\n"
-    table += "-" * 50 + "\n"
-    table += f"{'NL Cycle Similarity':<30} {results.get('nlt_cycle_similarity', 0.0):<15.4f}\n"
-    table += f"{'CM Cycle Similarity':<30} {results.get('cmt_cycle_similarity', 0.0):<15.4f}\n"
-    table += f"{'Mean Cycle Similarity':<30} {results.get('mean_cycle_similarity', 0.0):<15.4f}\n\n"
-
-    # Geometry preservation
-    table += "Geometry Preservation:\n"
-    table += "-" * 50 + "\n"
-    table += f"{'NL Geometry Correlation':<30} {results.get('nlt_geometry_correlation', 0.0):<15.4f}\n"
-    table += f"{'CM Geometry Correlation':<30} {results.get('cmt_geometry_correlation', 0.0):<15.4f}\n"
-    table += f"{'Mean Geometry Correlation':<30} {results.get('mean_geometry_correlation', 0.0):<15.4f}\n\n"
-
-    # Classification metrics (if available)
-    if 'translated_ari' in results:
-        table += "Classification Performance:\n"
-        table += "-" * 50 + "\n"
-        table += f"{'Translated ARI':<30} {results.get('translated_ari', 0.0):<15.4f}\n"
-        table += f"{'Translated NMI':<30} {results.get('translated_nmi', 0.0):<15.4f}\n"
-        table += f"{'Original ARI':<30} {results.get('original_ari', 0.0):<15.4f}\n"
-        table += f"{'Original NMI':<30} {results.get('original_nmi', 0.0):<15.4f}\n"
-        table += f"{'ARI Improvement':<30} {results.get('ari_improvement', 0.0):<15.4f}\n"
-        table += f"{'NMI Improvement':<30} {results.get('nmi_improvement', 0.0):<15.4f}\n\n"
-
-    table += "=" * 100 + "\n"
-
-    return table
-
-
-def test_evaluation():
-    """Main evaluation function."""
-    args = parse_args()
-
-    data_path = os.path.join(args.data_path, args.dataset)
-    nl_cm_cols = [args.nl_col, args.cm_col]
-    # Set device
-    device = get_device()
-    print(f"Using device: {device}")
-
-    # Create output directory
-    os.makedirs(args.output_dir, exist_ok=True)
-
-    # Load model
-    print("Loading model...")
-    model = load_model(args.checkpoint_path)
-    print("Model loaded successfully")
-    data = load_nl2cm_data(
-        data_path, nl_cm_cols, test_size=0.2, limit=args.limit, 
-        batch_size=args.batch_size, num_workers=args.num_workers
-    )
+def test_evaluation(model, device, embedding_dim):
+    """Test evaluation functionality."""
+    print("=" * 60)
+    print("Testing Evaluation")
+    print("=" * 60)
 
     # Create evaluator
     evaluator = NL2CMEvaluator(model, device)
 
-    # Load evaluation data
-    print("Loading evaluation data...")
-    results = evaluator.evaluate_data_loader(data['test_loader'])
+    # Create dummy evaluation data
+    nlt_eval = torch.randn(50, embedding_dim).to(device)
+    cmt_eval = torch.randn(50, embedding_dim).to(device)
 
-    print(f"Evaluation data: {len(results)} samples")
+    # Test individual metrics
+    cosine_sim = evaluator.compute_cosine_similarity(nlt_eval, cmt_eval)
+    print(f"Cosine similarity: {cosine_sim:.4f}")
 
-    # Compute baseline results
-    print("Computing baseline results...")
-    nlt_eval_tensor = torch.concat([batch['nlt'] for batch in tqdm(data['test_loader'], desc='Loading evaluation data')], dim=0)
-    cmt_eval_tensor = torch.concat([batch['cmt'] for batch in tqdm(data['test_loader'], desc='Loading evaluation data')], dim=0)
-    baseline_results = create_baseline_comparison(nlt_eval_tensor, cmt_eval_tensor)
+    top1_acc = evaluator.compute_top_k_accuracy(nlt_eval, cmt_eval, k=1)
+    print(f"Top-1 accuracy: {top1_acc:.4f}")
 
-    # Create evaluation table
-    table = create_evaluation_table(results, baseline_results)
-    print(table)
+    mean_rank = evaluator.compute_mean_rank(nlt_eval, cmt_eval)
+    print(f"Mean rank: {mean_rank:.2f}")
 
-    # Save results
-    results_path = os.path.join(args.output_dir, 'evaluation_results.json')
-    evaluator.save_results(results, results_path)
+    # Test comprehensive evaluation
+    results = evaluator.evaluate_all(nlt_eval, cmt_eval)
+    print(f"Evaluation results keys: {list(results.keys())}")
 
-    # Save baseline results
-    baseline_path = os.path.join(args.output_dir, 'baseline_results.json')
-    with open(baseline_path, 'w') as f:
-        json.dump(baseline_results, f, indent=2)
+    # Test evaluation table
+    table = evaluator.create_evaluation_table(results)
+    print("Evaluation table created successfully")
 
-    # Save evaluation table
-    table_path = os.path.join(args.output_dir, 'evaluation_table.txt')
-    with open(table_path, 'w') as f:
-        f.write(table)
-
-    print(f"Evaluation completed. Results saved to {args.output_dir}")
+    print("✓ Evaluation test passed\n")
+    return evaluator
 
 
-
-def test_end_to_end():
+def test_full_pipeline():
     """Test the complete pipeline on real data."""
     print("=" * 60)
     print("Testing Full Pipeline on Real Data")
     print("=" * 60)
 
-    args = parse_args()
-    data_path = os.path.join(args.data_path, args.dataset)
-    nl_cm_cols = [args.nl_col, args.cm_col]
-
     # Load real data
-    data = load_nl2cm_data(data_path, nl_cm_cols, test_size=0.2, limit=args.limit, batch_size=args.batch_size, num_workers=args.num_workers)
-    train_loader = data['train_loader']
-    val_loader = data['val_loader']
-    embedding_dim = get_data_embeddings_dimension(data_path, nl_cm_cols)
+    args = parse_args()
+    data_path = os.path.join("datasets", "embeddings-dfs", "bpmn")
+    nl_cm_cols = [args.nl_col, args.cm_col]
+    train_loader, val_loader, test_loader = load_nl2cm_data(
+        data_path, nl_cm_cols, test_size=0.2, batch_size=args.batch_size, num_workers=args.num_workers, limit=args.limit)
 
     # Create model
     embedding_dim = 1536
@@ -462,33 +210,32 @@ def test_end_to_end():
     # Create trainer
     trainer = NL2CMTrainer(
         model=model,
-        lr_generator=args.lr_generator,
-        lr_discriminator=args.lr_discriminator,
+        device=device,
+        lr_generator=1e-4,
+        lr_discriminator=4e-4,
         lambda_rec=args.lambda_rec,
         lambda_cyc=args.lambda_cyc,
         lambda_vsp=args.lambda_vsp,
         lambda_adv=args.lambda_adv,
-        lambda_latent=args.lambda_latent,
-        use_tensorboard=args.use_tensorboard,
-        log_dir=args.output_dir
+        lambda_latent=args.lambda_latent
     )
 
     # Train for a few epochs
-    print("Training for 5 epochs...")
+    print(f"Training for {args.epochs} epochs...")
     trainer.train(
         train_loader=train_loader,
         val_loader=val_loader,
         epochs=args.epochs,
-        save_dir='test_checkpoints',
-        save_every=5
+        save_dir=args.save_dir,
+        save_every=args.save_every,
+        early_stopping_patience=args.early_stopping_patience
     )
 
     # Evaluate on test data
     print("Evaluating on test data...")
-    evaluator = NL2CMEvaluator(model)
+    evaluator = NL2CMEvaluator(model, device)
 
-    # Create evaluation data
-    results = evaluator.evaluate_data_loader(data['test_loader'])
+    results = evaluator.evaluate_loader(test_loader)
 
     # Print results
     print("\n" + evaluator.create_evaluation_table(results))
@@ -502,7 +249,20 @@ def main():
     print("=" * 80)
 
     try:
-        test_end_to_end()
+        # Test 1: Data loading
+        # embedding_dim = test_data_loading()
+
+        # # Test 2: Model creation
+        # model, device = test_model_creation(embedding_dim)
+
+        # # Test 3: Training
+        # trainer = test_training(model, device, embedding_dim)
+
+        # # Test 4: Evaluation
+        # evaluator = test_evaluation(model, device, embedding_dim)
+
+        # Test 5: Full pipeline
+        test_full_pipeline()
 
         print("=" * 80)
         print("All tests passed successfully! ✓")

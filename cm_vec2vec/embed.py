@@ -173,6 +173,7 @@ def get_embeddings(data_path, nl_cm_cols, limit=None) -> tuple[np.ndarray, np.nd
             data = pickle.load(f)
             return data['nl_emb'], data['cm_emb']
     
+    print("Current working directory: ", os.getcwd())
     total_count = dict()
     total_nl_count = dict()
     total_cm_count = dict()
@@ -211,7 +212,6 @@ def get_embeddings(data_path, nl_cm_cols, limit=None) -> tuple[np.ndarray, np.nd
         pickle.dump({'nl_emb': NLT_EMB, 'cm_emb': CM_EMB}, f)
      
     return NLT_EMB, CM_EMB
-
 
 
 def get_embedding_dim(data_path) -> int:

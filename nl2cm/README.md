@@ -1,303 +1,229 @@
-# NL2CM: Natural Language to Conceptual Model Translation Library
+# NL2CM: Natural Language to Conceptual Model Translation
 
-A comprehensive PyTorch library for translating between Natural Language and Conceptual Model embedding spaces using the vec2vec approach. This library implements unsupervised learning to map embeddings from one domain to another without requiring paired training data.
+A comprehensive library for translating between Natural Language (NL) and Conceptual Model (CM) embedding spaces using the vec2vec approach. This library implements unsupervised translation between different embedding domains without requiring paired training data.
 
 ## Table of Contents
 
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Training Approach](#training-approach)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [API Reference](#api-reference)
-- [Usage Examples](#usage-examples)
-- [Evaluation](#evaluation)
-- [Configuration](#configuration)
-- [Advanced Features](#advanced-features)
-- [Performance](#performance)
-- [Contributing](#contributing)
+1. [Overview](#overview)
+2. [Architecture](#architecture)
+3. [Training Approach](#training-approach)
+4. [Installation](#installation)
+5. [Quick Start](#quick-start)
+6. [Detailed Usage](#detailed-usage)
+7. [API Reference](#api-reference)
+8. [Evaluation Metrics](#evaluation-metrics)
+9. [Examples](#examples)
+10. [Advanced Features](#advanced-features)
+11. [Troubleshooting](#troubleshooting)
 
 ## Overview
 
-The NL2CM library implements the vec2vec approach for unsupervised embedding translation between different domains. The key innovation is learning to translate between Natural Language (NL) and Conceptual Model (CM) embedding spaces using:
+The NL2CM library implements a sophisticated translation system that learns to map between Natural Language and Conceptual Model embedding spaces. Based on the vec2vec approach, it uses:
 
 - **Unpaired Training**: No need for aligned NL-CM pairs
-- **Adversarial Learning**: Ensures translated embeddings match target distribution
+- **Adversarial Learning**: Ensures translated embeddings match target distributions
 - **Geometry Preservation**: Maintains semantic relationships during translation
-- **Cycle Consistency**: Enables round-trip translation validation
+- **Cycle Consistency**: Enables round-trip translation fidelity
 
 ### Key Features
 
-- 🔄 **Bidirectional Translation**: NL ↔ CM embedding translation
-- 🎯 **Unsupervised Learning**: No paired data required
+- 🚀 **Unsupervised Translation**: Learn from unpaired embedding data
+- 🎯 **Multi-Modal Support**: Handle different embedding dimensions and types
 - 📊 **Comprehensive Evaluation**: All metrics from the vec2vec paper
-- 🏗️ **Modular Architecture**: Easy to extend and customize
+- 🔧 **Modular Design**: Easy to extend and customize
 - ⚡ **GPU Acceleration**: Optimized for CUDA training
-- 📈 **Real-time Monitoring**: Training progress and metrics tracking
+- 📈 **Training Monitoring**: Built-in progress tracking and checkpointing
 
 ## Architecture
 
-The NL2CM model follows a modular architecture with three main components:
+The NL2CM system uses a modular architecture with four main components:
 
+### 1. Adapters (`Adapter`)
+Transform embeddings between the original space and a shared latent space:
+
+```python
+# Input Adapters: embedding_space → latent_space
+nlt_adapter: NL_embeddings → latent_representations
+cmt_adapter: CM_embeddings → latent_representations
+
+# Output Adapters: latent_space → embedding_space  
+nlt_output_adapter: latent_representations → NL_embeddings
+cmt_output_adapter: latent_representations → CM_embeddings
 ```
-┌─────────────────┐    ┌──────────────┐    ┌─────────────────┐
-│   NL Embeddings │───▶│   Adapters   │───▶│  Shared Backbone│
-└─────────────────┘    └──────────────┘    └─────────────────┘
-                                                      │
-┌─────────────────┐    ┌──────────────┐              │
-│   CM Embeddings │───▶│   Adapters   │──────────────┘
-└─────────────────┘    └──────────────┘              │
-                                                     ▼
-┌─────────────────┐    ┌──────────────┐    ┌─────────────────┐
-│ Translated CM   │◀───│Output Adapters│◀───│  Processed      │
-└─────────────────┘    └──────────────┘    └─────────────────┘
+
+**Architecture Details:**
+- MLP with configurable depth (default: 3 layers)
+- LayerNorm + SiLU activation
+- Kaiming weight initialization
+- Optional dropout for regularization
+
+### 2. Shared Backbone (`SharedBackbone`)
+Processes embeddings in the shared latent space:
+
+```python
+# Shared processing in latent space
+backbone: latent_representations → refined_latent_representations
 ```
 
-### Core Components
+**Architecture Details:**
+- Configurable depth (default: 4 layers)
+- Residual connections for stable training
+- Optional conditioning support
+- LayerNorm + SiLU activation
 
-1. **Adapters**: Map embeddings to/from shared latent space
-   - Input adapters: `embedding_dim` → `latent_dim`
-   - Output adapters: `latent_dim` → `embedding_dim`
-   - MLP architecture with LayerNorm, SiLU activation, dropout
+### 3. Discriminators (`Discriminator`)
+Adversarial networks for output and latent spaces:
 
-2. **Shared Backbone**: Processes embeddings in latent space
-   - Residual connections for stable training
-   - Optional conditioning support
-   - Configurable depth and hidden dimensions
+```python
+# Output space discriminators
+nlt_discriminator: NL_embeddings → real/fake_score
+cmt_discriminator: CM_embeddings → real/fake_score
 
-3. **Discriminators**: Adversarial training components
-   - Output space discriminators (NL, CM)
-   - Latent space discriminator
-   - Least squares GAN for stable training
+# Latent space discriminator
+latent_discriminator: latent_representations → real/fake_score
+```
+
+**Architecture Details:**
+- MLP with LeakyReLU activation
+- LayerNorm for stability
+- Single output for binary classification
+
+### 4. Main Translator (`NL2CMTranslator`)
+Orchestrates all components:
+
+```python
+class NL2CMTranslator(nn.Module):
+    def __init__(self, embedding_dim=1536, latent_dim=256, ...):
+        # Initialize all components
+        self.nlt_adapter = Adapter(...)
+        self.cmt_adapter = Adapter(...)
+        self.backbone = SharedBackbone(...)
+        self.nlt_output_adapter = Adapter(...)
+        self.cmt_output_adapter = Adapter(...)
+        self.nlt_discriminator = Discriminator(...)
+        self.cmt_discriminator = Discriminator(...)
+        self.latent_discriminator = Discriminator(...)
+```
 
 ## Training Approach
 
-The training process uses multiple loss functions to ensure high-quality translation:
+The training process implements a multi-objective optimization with five key loss functions:
 
-### Loss Functions
-
-1. **Adversarial Loss** (`λ_adv = 1.0`)
-   - Output space: Distinguishes real vs translated embeddings
-   - Latent space: Aligns latent representations across domains
-   - Uses Least Squares GAN for stable training
-
-2. **Reconstruction Loss** (`λ_rec = 15.0`)
-   - Ensures identity mapping within each domain
-   - Prevents information loss during translation
-   - MSE between original and reconstructed embeddings
-
-3. **Cycle Consistency Loss** (`λ_cyc = 15.0`)
-   - Enforces round-trip translation: NL → CM → NL ≈ NL
-   - Acts as implicit supervision without paired data
-   - Critical for maintaining semantic content
-
-4. **Vector Space Preservation (VSP) Loss** (`λ_vsp = 2.0`)
-   - Preserves pairwise similarities within batches
-   - Maintains semantic neighborhoods
-   - Essential for downstream tasks like retrieval
-
-### Training Process
+### 1. Adversarial Loss
+Ensures translated embeddings are indistinguishable from real target embeddings:
 
 ```python
-# 1. Forward pass through translator
-outputs = model(batch)  # Contains translations, reconstructions, latents
+# Output space adversarial loss
+L_adv_output = L_GAN(D_NLT, F_C2N) + L_GAN(D_CMT, F_N2C)
 
-# 2. Compute generator losses
-gen_losses = trainer.compute_generator_loss(outputs, batch)
+# Latent space adversarial loss  
+L_adv_latent = L_GAN(D_latent, T∘A_NLT) + L_GAN(D_latent, T∘A_CMT)
 
-# 3. Update generator (adapters + backbone)
-optimizer_generator.zero_grad()
-gen_losses['total'].backward()
-optimizer_generator.step()
-
-# 4. Compute discriminator losses
-disc_losses = trainer.compute_discriminator_loss(outputs, batch)
-
-# 5. Update discriminators
-optimizer_discriminator.zero_grad()
-disc_losses['total'].backward()
-optimizer_discriminator.step()
+# Total adversarial loss
+L_adv = λ_adv * L_adv_output + λ_latent * L_adv_latent
 ```
 
-### Key Training Insights
+**Implementation:**
+- Least Squares GAN for stable training
+- Separate discriminators for each space
+- Generator tries to fool discriminators
 
-- **Unpaired Data**: Model learns from distribution matching, not explicit pairs
-- **Dual Optimization**: Generator and discriminator have separate optimizers
-- **Stable Training**: Separate forward passes prevent gradient conflicts
-- **Early Stopping**: Prevents overfitting with validation monitoring
+### 2. Reconstruction Loss
+Maintains identity within each embedding space:
+
+```python
+L_rec = E[||R_NLT(x) - x||²] + E[||R_CMT(y) - y||²]
+```
+
+**Purpose:**
+- Prevents information loss during translation
+- Ensures adapters preserve embedding content
+- Acts as regularization
+
+### 3. Cycle Consistency Loss
+Enables round-trip translation fidelity:
+
+```python
+L_cyc = E[||F_CMT→NLT(F_NLT→CMT(x)) - x||²] + E[||F_NLT→CMT(F_CMT→NLT(y)) - y||²]
+```
+
+**Purpose:**
+- Implicit supervision without paired data
+- Ensures translations are invertible
+- Prevents mode collapse
+
+### 4. Vector Space Preservation (VSP) Loss
+Maintains pairwise relationships during translation:
+
+```python
+L_vsp = (1/B) * Σᵢⱼ ||xᵢ·xⱼ - F_NLT→CMT(xᵢ)·F_NLT→CMT(xⱼ)||² + 
+        (1/B) * Σᵢⱼ ||yᵢ·yⱼ - F_CMT→NLT(yᵢ)·F_CMT→NLT(yⱼ)||²
+```
+
+**Purpose:**
+- Preserves semantic neighborhoods
+- Maintains embedding geometry
+- Critical for downstream tasks
+
+### 5. Training Procedure
+
+The training alternates between generator and discriminator updates:
+
+```python
+for epoch in range(epochs):
+    for batch in dataloader:
+        # Generator update
+        outputs = model(batch)
+        gen_losses = compute_generator_loss(outputs, batch)
+        optimizer_generator.zero_grad()
+        gen_losses['total'].backward()
+        optimizer_generator.step()
+        
+        # Discriminator update
+        outputs_disc = model(batch)  # Fresh forward pass
+        disc_losses = compute_discriminator_loss(outputs_disc, batch)
+        optimizer_discriminator.zero_grad()
+        disc_losses['total'].backward()
+        optimizer_discriminator.step()
+```
+
+**Loss Weighting:**
+- Reconstruction: λ_rec = 15.0 (high priority)
+- Cycle Consistency: λ_cyc = 15.0 (high priority)
+- Vector Space Preservation: λ_vsp = 2.0 (medium priority)
+- Adversarial: λ_adv = 1.0 (low priority)
+- Latent Adversarial: λ_latent = 1.0 (low priority)
 
 ## Installation
 
-### Requirements
+### Prerequisites
+- Python 3.8+
+- PyTorch 1.9+
+- CUDA 11.0+ (for GPU training)
+
+### Install Dependencies
 
 ```bash
-pip install torch>=1.9.0
-pip install scikit-learn
-pip install matplotlib
-pip install tqdm
-pip install numpy
+pip install torch scikit-learn matplotlib tqdm numpy pandas
 ```
 
-### From Source
+### Install NL2CM
 
 ```bash
+# Clone the repository
 git clone <repository-url>
-cd nl2cm
+cd cm-vec2vec
+
+# Install in development mode
 pip install -e .
 ```
 
 ## Quick Start
 
-### Basic Usage
+### 1. Basic Training
 
 ```python
-from nl2cm import NL2CMTranslator, NL2CMTrainer, NL2CMEvaluator
-from nl2cm.data_loader import load_nl2cm_data
-
-# 1. Load data
-train_loader, val_loader, test_loader = load_nl2cm_data('data.pkl')
-
-# 2. Create model
-model = NL2CMTranslator(
-    embedding_dim=1536,
-    latent_dim=256,
-    hidden_dim=512
-)
-
-# 3. Create trainer
-trainer = NL2CMTrainer(
-    model=model,
-    device='cuda',
-    lambda_rec=15.0,
-    lambda_cyc=15.0,
-    lambda_vsp=2.0
-)
-
-# 4. Train model
-history = trainer.train(
-    train_loader=train_loader,
-    val_loader=val_loader,
-    epochs=100
-)
-
-# 5. Evaluate model
-evaluator = NL2CMEvaluator(model, device='cuda')
-results = evaluator.evaluate_all(nlt_embeddings, cmt_embeddings)
-```
-
-### Command Line Training
-
-```bash
-# Basic training
-python nl2cm/train.py --epochs 100 --batch_size 32
-
-# Advanced configuration
-python nl2cm/train.py \
-    --epochs 200 \
-    --batch_size 16 \
-    --latent_dim 512 \
-    --hidden_dim 1024 \
-    --lambda_rec 20.0 \
-    --lambda_cyc 20.0 \
-    --lambda_vsp 3.0 \
-    --save_dir checkpoints/experiment_1
-```
-
-## API Reference
-
-### Core Classes
-
-#### `NL2CMTranslator`
-
-Main translation model with configurable architecture.
-
-```python
-model = NL2CMTranslator(
-    embedding_dim=1536,      # Input/output embedding dimension
-    latent_dim=256,          # Latent space dimension
-    hidden_dim=512,          # Hidden layer dimension
-    adapter_depth=3,         # Number of adapter layers
-    backbone_depth=4,        # Number of backbone layers
-    dropout=0.1,             # Dropout rate
-    use_conditioning=False,  # Enable conditioning
-    cond_dim=0              # Conditioning dimension
-)
-```
-
-**Key Methods:**
-- `forward(batch)`: Full forward pass with all outputs
-- `translate_nlt_to_cmt(nlt_emb)`: Translate NL to CM embeddings
-- `translate_cmt_to_nlt(cmt_emb)`: Translate CM to NL embeddings
-
-#### `NL2CMTrainer`
-
-Handles training loop and loss computation.
-
-```python
-trainer = NL2CMTrainer(
-    model=model,
-    device='cuda',
-    lr_generator=1e-4,       # Generator learning rate
-    lr_discriminator=4e-4,   # Discriminator learning rate
-    lambda_rec=15.0,         # Reconstruction loss weight
-    lambda_cyc=15.0,         # Cycle consistency loss weight
-    lambda_vsp=2.0,          # Vector space preservation weight
-    lambda_adv=1.0,          # Adversarial loss weight
-    lambda_latent=1.0,       # Latent adversarial weight
-    weight_decay=0.01        # Weight decay
-)
-```
-
-**Key Methods:**
-- `train(train_loader, val_loader, epochs)`: Full training loop
-- `train_step(batch)`: Single training step
-- `validate(val_loader)`: Validation evaluation
-- `load_checkpoint(path)`: Load saved model
-
-#### `NL2CMEvaluator`
-
-Comprehensive evaluation with multiple metrics.
-
-```python
-evaluator = NL2CMEvaluator(model, device='cuda')
-results = evaluator.evaluate_all(nlt_emb, cmt_emb)
-```
-
-**Key Methods:**
-- `compute_cosine_similarity(nlt_emb, cmt_emb)`: Translation quality
-- `compute_top_k_accuracy(nlt_emb, cmt_emb, k)`: Retrieval performance
-- `compute_mean_rank(nlt_emb, cmt_emb)`: Ranking performance
-- `compute_cycle_consistency_metrics(nlt_emb, cmt_emb)`: Round-trip quality
-- `compute_geometry_preservation_metrics(nlt_emb, cmt_emb)`: Similarity preservation
-
-### Data Loading
-
-#### `load_nl2cm_data(data_path, test_size=0.2, random_state=42)`
-
-Loads data and creates train/validation/test splits.
-
-**Input Format:**
-```python
-# Expected pickle file structure
-{
-    'NL_Serialization_Emb': [embedding_1, embedding_2, ...],  # List of numpy arrays
-    'CM_Serialization_Emb': [embedding_1, embedding_2, ...]   # List of numpy arrays
-}
-```
-
-**Returns:**
-- `train_loader`: Unpaired data for training
-- `val_loader`: Unpaired data for validation
-- `test_loader`: Paired data for evaluation
-
-## Usage Examples
-
-### Example 1: Basic Training
-
-```python
-import torch
-from nl2cm import NL2CMTranslator, NL2CMTrainer
-from nl2cm.data_loader import load_nl2cm_data
+from nl2cm import NL2CMTranslator, NL2CMTrainer, load_nl2cm_data
 
 # Load data
 train_loader, val_loader, test_loader = load_nl2cm_data(
@@ -314,7 +240,6 @@ model = NL2CMTranslator(
 # Create trainer
 trainer = NL2CMTrainer(
     model=model,
-    device='cuda',
     lr_generator=1e-4,
     lr_discriminator=4e-4
 )
@@ -324,196 +249,371 @@ history = trainer.train(
     train_loader=train_loader,
     val_loader=val_loader,
     epochs=100,
-    save_dir='checkpoints/basic_experiment'
-)
-
-print("Training completed!")
-```
-
-### Example 2: Custom Model Configuration
-
-```python
-# Advanced model with conditioning
-model = NL2CMTranslator(
-    embedding_dim=1536,
-    latent_dim=512,          # Larger latent space
-    hidden_dim=1024,         # Deeper networks
-    adapter_depth=4,         # More adapter layers
-    backbone_depth=6,        # Deeper backbone
-    dropout=0.15,            # Higher dropout
-    use_conditioning=True,   # Enable conditioning
-    cond_dim=32             # Conditioning dimension
-)
-
-# Custom loss weights
-trainer = NL2CMTrainer(
-    model=model,
-    device='cuda',
-    lambda_rec=20.0,         # Stronger reconstruction
-    lambda_cyc=20.0,         # Stronger cycle consistency
-    lambda_vsp=5.0,          # Stronger geometry preservation
-    lambda_adv=0.5,          # Weaker adversarial
-    lambda_latent=0.5        # Weaker latent adversarial
+    save_dir='checkpoints'
 )
 ```
 
-### Example 3: Evaluation and Analysis
+### 2. Evaluation
 
 ```python
 from nl2cm import NL2CMEvaluator
-import numpy as np
-
-# Load trained model
-checkpoint = torch.load('checkpoints/best_model.pt')
-model.load_state_dict(checkpoint['model_state_dict'])
 
 # Create evaluator
 evaluator = NL2CMEvaluator(model, device='cuda')
 
-# Load evaluation data
-nlt_eval, cmt_eval = create_evaluation_splits('data.pkl', n_eval_samples=1000)
-nlt_tensor = torch.FloatTensor(nlt_eval).to('cuda')
-cmt_tensor = torch.FloatTensor(cmt_eval).to('cuda')
+# Evaluate
+results = evaluator.evaluate_all(nlt_embeddings, cmt_embeddings)
 
-# Comprehensive evaluation
-results = evaluator.evaluate_all(nlt_tensor, cmt_tensor)
-
-# Print results table
+# Print results
 print(evaluator.create_evaluation_table(results))
-
-# Individual metrics
-cosine_sim = evaluator.compute_cosine_similarity(nlt_tensor, cmt_tensor)
-top1_acc = evaluator.compute_top_k_accuracy(nlt_tensor, cmt_tensor, k=1)
-mean_rank = evaluator.compute_mean_rank(nlt_tensor, cmt_tensor)
-
-print(f"Cosine Similarity: {cosine_sim:.4f}")
-print(f"Top-1 Accuracy: {top1_acc:.4f}")
-print(f"Mean Rank: {mean_rank:.2f}")
 ```
 
-### Example 4: Translation Inference
+### 3. Translation
 
 ```python
-# Load trained model
-model.eval()
-
 # Translate NL to CM
-nlt_embeddings = torch.randn(10, 1536).to('cuda')  # 10 NL embeddings
-with torch.no_grad():
-    cmt_translated = model.translate_nlt_to_cmt(nlt_embeddings)
+cm_embeddings = model.translate_nlt_to_cmt(nl_embeddings)
 
-# Translate CM to NL
-cmt_embeddings = torch.randn(10, 1536).to('cuda')  # 10 CM embeddings
-with torch.no_grad():
-    nlt_translated = model.translate_cmt_to_nlt(cmt_embeddings)
-
-print(f"Translated shapes: {cmt_translated.shape}, {nlt_translated.shape}")
-
-# Batch translation
-batch = {
-    'nlt': nlt_embeddings,
-    'cmt': cmt_embeddings
-}
-with torch.no_grad():
-    outputs = model(batch)
-    print(f"Available outputs: {list(outputs.keys())}")
+# Translate CM to NL  
+nl_embeddings = model.translate_cmt_to_nlt(cm_embeddings)
 ```
 
-## Evaluation
+## Detailed Usage
 
-The library provides comprehensive evaluation metrics matching the vec2vec paper:
+### Data Loading
 
-### Core Metrics
+The library supports flexible data loading with automatic train/validation/test splits:
+
+```python
+from nl2cm import load_nl2cm_data, create_evaluation_splits
+
+# Load with custom splits
+train_loader, val_loader, test_loader = load_nl2cm_data(
+    data_path='path/to/embeddings.pkl',
+    test_size=0.2,
+    random_state=42
+)
+
+# Create evaluation data
+nlt_eval, cmt_eval = create_evaluation_splits(
+    data_path='path/to/embeddings.pkl',
+    n_eval_samples=1000
+)
+```
+
+**Expected Data Format:**
+```python
+# Pickle file containing pandas DataFrame with columns:
+df = {
+    'NL_Serialization_Emb': [embedding_arrays],  # Shape: (N, embedding_dim)
+    'CM_Serialization_Emb': [embedding_arrays],  # Shape: (N, embedding_dim)
+    # ... other columns
+}
+```
+
+### Model Configuration
+
+```python
+model = NL2CMTranslator(
+    embedding_dim=1536,      # Input/output embedding dimension
+    latent_dim=256,          # Shared latent space dimension
+    hidden_dim=512,          # Hidden layer dimension
+    adapter_depth=3,         # Adapter network depth
+    backbone_depth=4,        # Backbone network depth
+    dropout=0.1,             # Dropout rate
+    use_conditioning=False,  # Enable conditioning
+    cond_dim=0              # Conditioning dimension
+)
+```
+
+### Training Configuration
+
+```python
+trainer = NL2CMTrainer(
+    model=model,
+    device='cuda',
+    lr_generator=1e-4,       # Generator learning rate
+    lr_discriminator=4e-4,   # Discriminator learning rate
+    lambda_rec=15.0,         # Reconstruction loss weight
+    lambda_cyc=15.0,         # Cycle consistency loss weight
+    lambda_vsp=2.0,          # Vector space preservation weight
+    lambda_adv=1.0,          # Adversarial loss weight
+    lambda_latent=1.0,       # Latent adversarial loss weight
+    weight_decay=0.01        # Weight decay
+)
+```
+
+### Training with Monitoring
+
+```python
+history = trainer.train(
+    train_loader=train_loader,
+    val_loader=val_loader,
+    epochs=100,
+    save_dir='checkpoints',
+    save_every=10,           # Save checkpoint every N epochs
+    early_stopping_patience=20  # Early stopping patience
+)
+
+# Access training history
+train_losses = history['train_losses']
+val_losses = history['val_losses']
+```
+
+## API Reference
+
+### Core Classes
+
+#### `NL2CMTranslator`
+
+Main translation model class.
+
+```python
+class NL2CMTranslator(nn.Module):
+    def __init__(self, embedding_dim, latent_dim=256, hidden_dim=512, 
+                 adapter_depth=3, backbone_depth=4, dropout=0.1,
+                 use_conditioning=False, cond_dim=0):
+        """Initialize the NL2CM translator."""
+        
+    def forward(self, batch, condition=None):
+        """Forward pass through the translator."""
+        
+    def translate_nlt_to_cmt(self, nlt_emb, condition=None):
+        """Translate NL embeddings to CM embeddings."""
+        
+    def translate_cmt_to_nlt(self, cmt_emb, condition=None):
+        """Translate CM embeddings to NL embeddings."""
+```
+
+#### `NL2CMTrainer`
+
+Training orchestrator with all loss functions.
+
+```python
+class NL2CMTrainer:
+    def __init__(self, model, device='cuda', lr_generator=1e-4, 
+                 lr_discriminator=4e-4, **loss_weights):
+        """Initialize the trainer."""
+        
+    def train_step(self, batch):
+        """Perform one training step."""
+        
+    def validate(self, val_loader):
+        """Validate the model."""
+        
+    def train(self, train_loader, val_loader, epochs, save_dir='checkpoints',
+              save_every=10, early_stopping_patience=20):
+        """Train the model."""
+```
+
+#### `NL2CMEvaluator`
+
+Comprehensive evaluation with all vec2vec metrics.
+
+```python
+class NL2CMEvaluator:
+    def __init__(self, model, device='cuda'):
+        """Initialize the evaluator."""
+        
+    def evaluate_all(self, nlt_emb, cmt_emb, labels=None):
+        """Compute all evaluation metrics."""
+        
+    def compute_cosine_similarity(self, nlt_emb, cmt_emb):
+        """Compute mean cosine similarity."""
+        
+    def compute_top_k_accuracy(self, nlt_emb, cmt_emb, k=1):
+        """Compute Top-K accuracy."""
+        
+    def compute_mean_rank(self, nlt_emb, cmt_emb):
+        """Compute mean rank."""
+```
+
+### Data Classes
+
+#### `NL2CMDataset`
+
+Unpaired dataset for training.
+
+```python
+class NL2CMDataset(Dataset):
+    def __init__(self, nlt_embeddings, cmt_embeddings, normalize=True, noise_level=0.0):
+        """Initialize unpaired dataset."""
+        
+    def __getitem__(self, idx):
+        """Get random unpaired sample."""
+```
+
+#### `PairedNL2CMDataset`
+
+Paired dataset for evaluation.
+
+```python
+class PairedNL2CMDataset(Dataset):
+    def __init__(self, nlt_embeddings, cmt_embeddings, normalize=True):
+        """Initialize paired dataset."""
+        
+    def __getitem__(self, idx):
+        """Get paired sample."""
+```
+
+## Evaluation Metrics
+
+The library implements comprehensive evaluation metrics matching the vec2vec paper:
+
+### Basic Translation Metrics
 
 1. **Cosine Similarity**: Mean cosine similarity between translated and target embeddings
-2. **Top-K Accuracy**: Fraction of queries where correct answer is in top-K results
-3. **Mean Rank**: Average rank of correct answers in retrieval
-4. **MRR (Mean Reciprocal Rank)**: Harmonic mean of reciprocal ranks
+2. **Mean Rank**: Average rank of correct answers in retrieval
+3. **Top-K Accuracy**: Fraction of queries where correct answer is in top-K
+4. **MRR**: Mean Reciprocal Rank
 
 ### Advanced Metrics
 
 1. **Cycle Consistency**: Round-trip translation fidelity
-   - NL → CM → NL similarity
-   - CM → NL → CM similarity
-
 2. **Geometry Preservation**: Correlation of pairwise similarities
-   - Within-batch similarity preservation
-   - Semantic neighborhood maintenance
+3. **Classification Performance**: Clustering-based evaluation using ARI and NMI
 
-3. **Classification Performance**: Clustering-based evaluation
-   - Adjusted Rand Index (ARI)
-   - Normalized Mutual Information (NMI)
-
-### Baseline Comparisons
-
-- **Identity**: Direct embedding comparison (no translation)
-- **Procrustes**: Orthogonal transformation baseline
-- **Random**: Random ranking baseline
-
-### Example Evaluation Results
+### Example Results
 
 ```
 ================================================================================
 NL2CM Translation Evaluation Results
 ================================================================================
 
-Metric                    NL2CM           Identity        Procrustes      Random         
--------------------------------------------------------------------------------------
-Cosine Similarity         0.3714          0.6591          0.8945          N/A            
-Mean Rank                 488.67          N/A             N/A             489.00         
-Top-1 Accuracy            0.0010          0.0000          0.0000          0.0000         
-Top-5 Accuracy            0.0041          0.0000          0.0000          0.0000         
-MRR                       0.0075          0.0000          0.0000          0.0000         
+Metric                    NL2CM         Identity      Procrustes    Random       
+---------------------------------------------------------------------------------
+Cosine Similarity         0.3714        0.6591        0.8945        N/A          
+Mean Rank                 488.67        N/A           N/A           489.00       
+Top-1 Accuracy            0.0010        0.0000        0.0000        0.0000       
+Top-5 Accuracy            0.0041        0.0000        0.0000        0.0000       
+MRR                       0.0075        0.0000        0.0000        0.0000       
 
 Cycle Consistency:
 --------------------------------------------------
-NL Cycle Similarity       0.3182         
-CM Cycle Similarity       0.3698         
-Mean Cycle Similarity     0.3440         
+NL Cycle Similarity       0.3182       
+CM Cycle Similarity       0.3698       
+Mean Cycle Similarity     0.3440       
 
 Geometry Preservation:
 --------------------------------------------------
-NL Geometry Correlation   0.6248         
-CM Geometry Correlation   0.4724         
-Mean Geometry Correlation 0.5486         
+NL Geometry Correlation   0.6248       
+CM Geometry Correlation   0.4724       
+Mean Geometry Correlation 0.5486       
 ```
 
-## Configuration
+## Examples
 
-### Model Architecture
+### Example 1: Basic Training and Evaluation
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `embedding_dim` | 1536 | Input/output embedding dimension |
-| `latent_dim` | 256 | Latent space dimension |
-| `hidden_dim` | 512 | Hidden layer dimension |
-| `adapter_depth` | 3 | Number of adapter layers |
-| `backbone_depth` | 4 | Number of backbone layers |
-| `dropout` | 0.1 | Dropout rate |
-| `use_conditioning` | False | Enable conditioning |
-| `cond_dim` | 0 | Conditioning dimension |
+```python
+import torch
+from nl2cm import NL2CMTranslator, NL2CMTrainer, NL2CMEvaluator, load_nl2cm_data
 
-### Training Parameters
+# Load data
+train_loader, val_loader, test_loader = load_nl2cm_data(
+    'datasets/eamodelset_nl2cm_embeddings_df.pkl'
+)
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `lr_generator` | 1e-4 | Generator learning rate |
-| `lr_discriminator` | 4e-4 | Discriminator learning rate |
-| `lambda_rec` | 15.0 | Reconstruction loss weight |
-| `lambda_cyc` | 15.0 | Cycle consistency loss weight |
-| `lambda_vsp` | 2.0 | Vector space preservation weight |
-| `lambda_adv` | 1.0 | Adversarial loss weight |
-| `lambda_latent` | 1.0 | Latent adversarial weight |
-| `weight_decay` | 0.01 | Weight decay |
+# Create and train model
+model = NL2CMTranslator(embedding_dim=1536, latent_dim=256)
+trainer = NL2CMTrainer(model, device='cuda')
 
-### Data Parameters
+print("Starting training...")
+history = trainer.train(
+    train_loader=train_loader,
+    val_loader=val_loader,
+    epochs=50,
+    save_dir='checkpoints'
+)
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `batch_size` | 32 | Training batch size |
-| `test_size` | 0.2 | Fraction for test split |
-| `random_state` | 42 | Random seed |
-| `num_workers` | 4 | DataLoader workers |
+# Evaluate
+evaluator = NL2CMEvaluator(model, device='cuda')
+results = evaluator.evaluate_all(nlt_eval, cmt_eval)
+print(evaluator.create_evaluation_table(results))
+```
+
+### Example 2: Custom Model Configuration
+
+```python
+# Custom architecture
+model = NL2CMTranslator(
+    embedding_dim=1536,
+    latent_dim=512,          # Larger latent space
+    hidden_dim=1024,         # Deeper networks
+    adapter_depth=4,         # More adapter layers
+    backbone_depth=6,        # Deeper backbone
+    dropout=0.2,             # Higher dropout
+    use_conditioning=True,   # Enable conditioning
+    cond_dim=32              # Conditioning dimension
+)
+
+# Custom training configuration
+trainer = NL2CMTrainer(
+    model=model,
+    lr_generator=5e-5,       # Lower learning rate
+    lr_discriminator=2e-4,   # Adjusted discriminator LR
+    lambda_rec=20.0,         # Higher reconstruction weight
+    lambda_cyc=20.0,         # Higher cycle consistency weight
+    lambda_vsp=5.0,          # Higher VSP weight
+    weight_decay=0.005       # Lower weight decay
+)
+```
+
+### Example 3: Batch Translation
+
+```python
+# Translate multiple embeddings
+def batch_translate(model, nlt_embeddings, batch_size=32):
+    """Translate embeddings in batches."""
+    model.eval()
+    translated = []
+    
+    with torch.no_grad():
+        for i in range(0, len(nlt_embeddings), batch_size):
+            batch = nlt_embeddings[i:i+batch_size]
+            batch_translated = model.translate_nlt_to_cmt(batch)
+            translated.append(batch_translated)
+    
+    return torch.cat(translated, dim=0)
+
+# Usage
+nlt_embeddings = torch.randn(1000, 1536)  # 1000 NL embeddings
+cm_embeddings = batch_translate(model, nlt_embeddings)
+print(f"Translated {len(cm_embeddings)} embeddings")
+```
+
+### Example 4: Evaluation with Custom Metrics
+
+```python
+# Custom evaluation
+def evaluate_translation_quality(model, nlt_emb, cmt_emb):
+    """Custom evaluation function."""
+    evaluator = NL2CMEvaluator(model)
+    
+    # Basic metrics
+    cosine_sim = evaluator.compute_cosine_similarity(nlt_emb, cmt_emb)
+    top1_acc = evaluator.compute_top_k_accuracy(nlt_emb, cmt_emb, k=1)
+    mean_rank = evaluator.compute_mean_rank(nlt_emb, cmt_emb)
+    
+    # Cycle consistency
+    cycle_metrics = evaluator.compute_cycle_consistency_metrics(nlt_emb, cmt_emb)
+    
+    # Geometry preservation
+    geometry_metrics = evaluator.compute_geometry_preservation_metrics(nlt_emb, cmt_emb)
+    
+    return {
+        'cosine_similarity': cosine_sim,
+        'top1_accuracy': top1_acc,
+        'mean_rank': mean_rank,
+        'cycle_consistency': cycle_metrics['mean_cycle_similarity'],
+        'geometry_preservation': geometry_metrics['mean_geometry_correlation']
+    }
+
+# Usage
+results = evaluate_translation_quality(model, nlt_eval, cmt_eval)
+for metric, value in results.items():
+    print(f"{metric}: {value:.4f}")
+```
 
 ## Advanced Features
 
@@ -522,6 +622,7 @@ Mean Geometry Correlation 0.5486
 Enable conditioning on target modeling language:
 
 ```python
+# Model with conditioning
 model = NL2CMTranslator(
     embedding_dim=1536,
     latent_dim=256,
@@ -529,141 +630,165 @@ model = NL2CMTranslator(
     cond_dim=32
 )
 
-# During training/inference
-condition = torch.randn(batch_size, 32)  # One-hot or learned embeddings
-outputs = model(batch, condition=condition)
+# Translation with condition
+condition = torch.randn(batch_size, 32)  # Target language embedding
+cm_embeddings = model.translate_nlt_to_cmt(nlt_embeddings, condition)
 ```
 
-### 2. Custom Loss Weights
-
-Fine-tune training by adjusting loss weights:
+### 2. Custom Loss Functions
 
 ```python
-# Emphasize reconstruction and cycle consistency
-trainer = NL2CMTrainer(
-    model=model,
-    lambda_rec=25.0,      # Strong reconstruction
-    lambda_cyc=25.0,      # Strong cycle consistency
-    lambda_vsp=1.0,       # Moderate geometry preservation
-    lambda_adv=0.5,       # Weak adversarial
-    lambda_latent=0.5     # Weak latent adversarial
-)
+class CustomNL2CMTrainer(NL2CMTrainer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.custom_loss_weight = kwargs.get('lambda_custom', 1.0)
+    
+    def compute_generator_loss(self, outputs, batch):
+        # Get standard losses
+        losses = super().compute_generator_loss(outputs, batch)
+        
+        # Add custom loss
+        custom_loss = self.compute_custom_loss(outputs, batch)
+        losses['total'] += self.custom_loss_weight * custom_loss
+        losses['custom'] = custom_loss
+        
+        return losses
+    
+    def compute_custom_loss(self, outputs, batch):
+        # Implement your custom loss here
+        return torch.tensor(0.0, device=self.device)
 ```
 
-### 3. Progressive Training
-
-Train with curriculum learning:
-
-```python
-# Start with reconstruction, add adversarial later
-trainer = NL2CMTrainer(
-    model=model,
-    lambda_rec=20.0,
-    lambda_cyc=20.0,
-    lambda_vsp=0.0,       # Start without VSP
-    lambda_adv=0.0,       # Start without adversarial
-    lambda_latent=0.0
-)
-
-# Gradually increase weights during training
-for epoch in range(epochs):
-    if epoch > 20:
-        trainer.lambda_adv = 1.0
-    if epoch > 40:
-        trainer.lambda_vsp = 2.0
-```
-
-### 4. Multi-GPU Training
-
-Scale to multiple GPUs:
+### 3. Multi-GPU Training
 
 ```python
 import torch.nn as nn
 
-# Wrap model for multi-GPU
+# Wrap model for multi-GPU training
 if torch.cuda.device_count() > 1:
     model = nn.DataParallel(model)
     print(f"Using {torch.cuda.device_count()} GPUs")
 
-# Training remains the same
 trainer = NL2CMTrainer(model, device='cuda')
 ```
 
-## Performance
+### 4. Custom Data Loading
 
-### Typical Results
+```python
+from torch.utils.data import Dataset, DataLoader
 
-On the EA Model Set dataset:
+class CustomNL2CMDataset(Dataset):
+    def __init__(self, nlt_embeddings, cmt_embeddings, custom_features=None):
+        self.nlt_embeddings = nlt_embeddings
+        self.cmt_embeddings = cmt_embeddings
+        self.custom_features = custom_features
+    
+    def __len__(self):
+        return len(self.nlt_embeddings)
+    
+    def __getitem__(self, idx):
+        sample = {
+            'nlt': torch.FloatTensor(self.nlt_embeddings[idx]),
+            'cmt': torch.FloatTensor(self.cmt_embeddings[idx])
+        }
+        
+        if self.custom_features is not None:
+            sample['custom'] = torch.FloatTensor(self.custom_features[idx])
+        
+        return sample
 
-| Metric | Value | Baseline Comparison |
-|--------|-------|-------------------|
-| Cosine Similarity | 0.3714 | vs Identity: 0.6591 |
-| Mean Rank | 488.67 | vs Random: 489.00 |
-| Top-1 Accuracy | 0.0010 | vs Random: 0.0000 |
-| Cycle Consistency | 0.3440 | - |
-| Geometry Preservation | 0.5486 | - |
-
-### Training Time
-
-- **Small Model** (256 latent, 512 hidden): ~2 minutes/epoch on RTX 3080
-- **Medium Model** (512 latent, 1024 hidden): ~5 minutes/epoch on RTX 3080
-- **Large Model** (1024 latent, 2048 hidden): ~15 minutes/epoch on RTX 3080
-
-### Memory Usage
-
-- **Training**: ~8GB VRAM for batch_size=32, embedding_dim=1536
-- **Inference**: ~2GB VRAM for batch_size=100
-- **Model Size**: ~8.3M parameters for default configuration
-
-### Optimization Tips
-
-1. **Batch Size**: Use largest batch size that fits in memory
-2. **Learning Rates**: Higher discriminator LR (4x generator) for stability
-3. **Loss Weights**: Start with high reconstruction/cycle weights
-4. **Early Stopping**: Monitor validation loss to prevent overfitting
-5. **Gradient Clipping**: Add if training becomes unstable
-
-## Contributing
-
-We welcome contributions! Please see our contributing guidelines:
-
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Submit a pull request
-
-### Development Setup
-
-```bash
-git clone <repository-url>
-cd nl2cm
-pip install -e .
-pip install pytest black flake8
+# Usage
+custom_dataset = CustomNL2CMDataset(nlt_emb, cmt_emb, custom_features)
+custom_loader = DataLoader(custom_dataset, batch_size=32, shuffle=True)
 ```
 
-### Running Tests
+## Troubleshooting
 
-```bash
-# Run all tests
-python test_nl2cm.py
+### Common Issues
 
-# Run specific test
-python -m pytest tests/test_model.py -v
-```
+1. **CUDA Out of Memory**
+   ```python
+   # Reduce batch size
+   train_loader = DataLoader(dataset, batch_size=16)  # Instead of 32
+   
+   # Use gradient accumulation
+   trainer = NL2CMTrainer(model, device='cuda')
+   # Implement gradient accumulation in training loop
+   ```
 
-### Code Style
+2. **Training Instability**
+   ```python
+   # Reduce learning rates
+   trainer = NL2CMTrainer(
+       model=model,
+       lr_generator=5e-5,      # Lower generator LR
+       lr_discriminator=2e-4   # Lower discriminator LR
+   )
+   
+   # Adjust loss weights
+   trainer = NL2CMTrainer(
+       model=model,
+       lambda_rec=10.0,        # Lower reconstruction weight
+       lambda_cyc=10.0,        # Lower cycle consistency weight
+       lambda_vsp=1.0          # Lower VSP weight
+   )
+   ```
 
-We use Black for formatting and flake8 for linting:
+3. **Poor Translation Quality**
+   ```python
+   # Increase model capacity
+   model = NL2CMTranslator(
+       embedding_dim=1536,
+       latent_dim=512,         # Larger latent space
+       hidden_dim=1024,        # Larger hidden layers
+       adapter_depth=4,        # Deeper adapters
+       backbone_depth=6        # Deeper backbone
+   )
+   
+   # Increase training time
+   history = trainer.train(
+       train_loader=train_loader,
+       val_loader=val_loader,
+       epochs=200,             # More epochs
+       early_stopping_patience=50  # More patience
+   )
+   ```
 
-```bash
-black nl2cm/
-flake8 nl2cm/
-```
+4. **Data Loading Issues**
+   ```python
+   # Check data format
+   import pickle
+   with open('data.pkl', 'rb') as f:
+       df = pickle.load(f)
+   
+   print(df.columns)  # Should include 'NL_Serialization_Emb', 'CM_Serialization_Emb'
+   print(df['NL_Serialization_Emb'].iloc[0].shape)  # Should be (embedding_dim,)
+   ```
+
+### Performance Tips
+
+1. **Memory Optimization**
+   - Use smaller batch sizes for large models
+   - Enable gradient checkpointing for very deep networks
+   - Use mixed precision training
+
+2. **Training Speed**
+   - Use multiple workers for data loading
+   - Enable CUDA optimizations
+   - Use gradient accumulation for effective larger batch sizes
+
+3. **Model Selection**
+   - Start with default hyperparameters
+   - Increase model capacity gradually
+   - Monitor validation loss for overfitting
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Citation
 
-If you use this library in your research, please cite:
+If you use this library, please cite the original vec2vec paper:
 
 ```bibtex
 @article{jha2025harnessing,
@@ -674,17 +799,12 @@ If you use this library in your research, please cite:
 }
 ```
 
-## License
+## Contributing
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Acknowledgments
 
 - Based on the vec2vec approach from Jha et al. (2025)
 - Implements adversarial training and geometry preservation
 - Extends to NL2CM translation task
-- Built with PyTorch and modern deep learning practices
-
----
-
-For more information, examples, and updates, visit our [documentation](docs/) and [GitHub repository](https://github.com/your-repo/nl2cm).

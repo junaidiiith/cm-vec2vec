@@ -9,7 +9,7 @@ embedding spaces using adversarial training and geometry preservation.
 from .model import NL2CMTranslator, Adapter, SharedBackbone, Discriminator
 from .training import NL2CMTrainer
 from .evaluation import NL2CMEvaluator
-from .data_loader import NL2CMDataset, PairedNL2CMDataset, load_nl2cm_data
+from .data_loader import NL2CMDataset, PairedNL2CMDataset, load_nl2cm_data, create_evaluation_splits
 
 __version__ = "1.0.0"
 __author__ = "NL2CM Team"
@@ -23,5 +23,6 @@ __all__ = [
     "NL2CMEvaluator",
     "NL2CMDataset",
     "PairedNL2CMDataset",
-    "load_nl2cm_data"
+    "load_nl2cm_data",
+    "create_evaluation_splits"
 ]

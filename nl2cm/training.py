@@ -5,7 +5,6 @@ This module implements the training loop and loss functions for the NL2CM transl
 following the vec2vec approach with adversarial, reconstruction, cycle consistency, and VSP losses.
 """
 
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -13,11 +12,9 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from typing import Dict, List
 import numpy as np
-from tqdm.auto import tqdm
+from tqdm import tqdm
 import os
-
-from nl2cm.utils import get_device
-from nl2cm.tensorboard_logger import NL2CMTensorBoardLogger
+from torch.utils.tensorboard import SummaryWriter
 
 
 class NL2CMTrainer:
@@ -28,18 +25,18 @@ class NL2CMTrainer:
     from the vec2vec approach: adversarial, reconstruction, cycle consistency, and VSP.
     """
 
-    def __init__(self, model: nn.Module,
-        lr_generator: float = 1e-4, lr_discriminator: float = 4e-4,
-        lambda_rec: float = 15.0, lambda_cyc: float = 15.0,
-        lambda_vsp: float = 2.0, lambda_adv: float = 1.0,
-        lambda_latent: float = 1.0, weight_decay: float = 0.01,
-        use_tensorboard: bool = True, log_dir: str = 'tensorboard_logs'
-    ):
+    def __init__(self, model: nn.Module, device: str = 'cuda',
+                 lr_generator: float = 1e-4, lr_discriminator: float = 4e-4,
+                 lambda_rec: float = 15.0, lambda_cyc: float = 15.0,
+                 lambda_vsp: float = 2.0, lambda_adv: float = 1.0,
+                 lambda_latent: float = 1.0, weight_decay: float = 0.01, 
+                 save_dir: str = 'logs/nl2cm'):
         """
         Initialize the trainer.
 
         Args:
             model: The NL2CM translation model
+            device: Device to run training on
             lr_generator: Learning rate for generator components
             lr_discriminator: Learning rate for discriminators
             lambda_rec: Weight for reconstruction loss
@@ -48,11 +45,10 @@ class NL2CMTrainer:
             lambda_adv: Weight for adversarial loss
             lambda_latent: Weight for latent adversarial loss
             weight_decay: Weight decay for optimizers
-            use_tensorboard: Whether to use TensorBoard logging
-            log_dir: Directory for TensorBoard logs
+            save_dir: Directory to save checkpoints
         """
-        self.device = get_device()
-        self.model = model.to(self.device)
+        self.model = model.to(device)
+        self.device = device
 
         # Loss weights
         self.lambda_rec = lambda_rec
@@ -71,14 +67,8 @@ class NL2CMTrainer:
         # Training history
         self.train_losses = []
         self.val_losses = []
-        self.epoch = 0  # Initialize epoch counter
 
-        # TensorBoard logging
-        self.use_tensorboard = use_tensorboard
-        self.tensorboard_logger = None
-        if use_tensorboard:
-            self.tensorboard_logger = NL2CMTensorBoardLogger(log_dir)
-
+        self.writer = SummaryWriter(log_dir=save_dir)
 
     def _setup_optimizers(self, lr_generator: float, lr_discriminator: float,
                           weight_decay: float):
@@ -243,31 +233,22 @@ class NL2CMTrainer:
         # Combine losses for logging
         losses = {**gen_losses, **
                   {f'disc_{k}': v for k, v in disc_losses.items()}}
-
-        # Log to TensorBoard
-        if self.tensorboard_logger:
-            self.tensorboard_logger.log_training_losses(losses, self.epoch)
-            self.tensorboard_logger.increment_global_step()
-
         return {k: v.item() if isinstance(v, torch.Tensor) else v for k, v in losses.items()}
 
-
-    def validate(self, val_loader: DataLoader, epoch: int) -> Dict[str, float]:
+    def validate(self, val_loader: DataLoader) -> Dict[str, float]:
         """Validate the model."""
         self.model.eval()
-        total_losses = dict()
+        total_losses = {}
 
         with torch.no_grad():
             for batch in val_loader:
                 # Handle different batch formats
                 if isinstance(batch, dict):
-                    batch = {k: v.to(get_device()) for k, v in batch.items()}
+                    batch = {k: v.to(self.device) for k, v in batch.items()}
                 else:
                     # Assume it's a tuple/list from TensorDataset
-                    batch = {
-                        'nlt': batch[0].to(get_device()), 
-                        'cmt': batch[1].to(get_device())
-                    }
+                    batch = {'nlt': batch[0].to(
+                        self.device), 'cmt': batch[1].to(self.device)}
 
                 outputs = self.model(batch)
 
@@ -283,17 +264,10 @@ class NL2CMTrainer:
 
         # Average losses
         num_batches = len(val_loader)
-        avg_losses = {k: v / num_batches for k, v in total_losses.items()}
-
-        # Log to TensorBoard
-        if self.tensorboard_logger:
-            self.tensorboard_logger.log_validation_losses(avg_losses, epoch)
-
-        return avg_losses
+        return {k: v / num_batches for k, v in total_losses.items()}
 
     def train(self, train_loader: DataLoader, val_loader: DataLoader,
-              epochs: int, save_dir: str = 'checkpoints',
-              save_every: int = 10, early_stopping_patience: int = 20) -> Dict[str, List[float]]:
+              epochs: int, save_every: int = 10, early_stopping_patience: int = 20) -> Dict[str, List[float]]:
         """
         Train the model.
 
@@ -308,15 +282,15 @@ class NL2CMTrainer:
         Returns:
             Dictionary containing training history
         """
+        save_dir = self.save_dir
         os.makedirs(save_dir, exist_ok=True)
+        checkpoints_dir = os.path.join(save_dir, 'checkpoints')
+        os.makedirs(checkpoints_dir, exist_ok=True)
 
         best_val_loss = float('inf')
         patience_counter = 0
 
         for epoch in range(epochs):
-            if self.tensorboard_logger:
-                self.tensorboard_logger.set_epoch(epoch)
-
             # Training
             epoch_losses = []
             pbar = tqdm(train_loader, desc=f'Epoch {epoch+1}/{epochs}')
@@ -332,26 +306,16 @@ class NL2CMTrainer:
                 })
 
             # Average training losses
-            avg_train_losses = dict()
+            avg_train_losses = {}
             for key in epoch_losses[0].keys():
                 avg_train_losses[key] = np.mean(
                     [losses[key] for losses in epoch_losses])
 
+            for key, value in avg_train_losses.items():
+                self.writer.add_scalar(f'train/{key}', value, epoch)
+
             # Validation
-            val_losses = self.validate(val_loader, epoch)
-
-            # Log learning rates and model parameters to TensorBoard
-            if self.tensorboard_logger:
-                # Log learning rates
-                gen_lr = self.optimizer_generator.param_groups[0]['lr']
-                disc_lr = self.optimizer_discriminator.param_groups[0]['lr']
-                self.tensorboard_logger.log_learning_rates(
-                    gen_lr, disc_lr, epoch)
-
-                # Log model parameters (every 5 epochs to avoid too much data)
-                if epoch % 5 == 0:
-                    self.tensorboard_logger.log_model_parameters(
-                        self.model, epoch)
+            val_losses = self.validate(val_loader)
 
             # Store losses
             self.train_losses.append(avg_train_losses)
@@ -364,10 +328,13 @@ class NL2CMTrainer:
             print(
                 f"Val - Gen: {val_losses['total']:.4f}, Disc: {val_losses['disc_total']:.4f}")
 
+            for key, value in val_losses.items():
+                self.writer.add_scalar(f'val/{key}', value, epoch)
+
             # Save checkpoint
             if (epoch + 1) % save_every == 0:
                 checkpoint_path = os.path.join(
-                    save_dir, f'nl2cm_epoch_{epoch+1}.pt')
+                    checkpoints_dir, f'nl2cm_epoch_{epoch+1}.pt')
                 torch.save({
                     'epoch': epoch + 1,
                     'model_state_dict': self.model.state_dict(),
@@ -377,13 +344,14 @@ class NL2CMTrainer:
                     'val_losses': self.val_losses
                 }, checkpoint_path)
                 print(f"Saved checkpoint: {checkpoint_path}")
-
+                for key, value in val_losses.items():
+                    self.writer.add_scalar(f'val/{key}', value, epoch)
             # Early stopping
             if val_losses['total'] < best_val_loss:
                 best_val_loss = val_losses['total']
                 patience_counter = 0
                 # Save best model
-                best_path = os.path.join(save_dir, 'nl2cm_best.pt')
+                best_path = os.path.join(checkpoints_dir, 'nl2cm_best.pt')
                 torch.save({
                     'epoch': epoch + 1,
                     'model_state_dict': self.model.state_dict(),
@@ -405,7 +373,7 @@ class NL2CMTrainer:
 
     def load_checkpoint(self, checkpoint_path: str):
         """Load a checkpoint."""
-        checkpoint = torch.load(checkpoint_path, map_location=get_device())
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer_generator.load_state_dict(
             checkpoint['optimizer_generator_state_dict'])
@@ -414,10 +382,3 @@ class NL2CMTrainer:
         self.train_losses = checkpoint.get('train_losses', [])
         self.val_losses = checkpoint.get('val_losses', [])
         return checkpoint['epoch']
-
-
-    def close_tensorboard(self):
-        """Close the TensorBoard logger."""
-        if self.tensorboard_logger:
-            self.tensorboard_logger.close()
-    
