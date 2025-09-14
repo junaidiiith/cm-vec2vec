@@ -21,38 +21,41 @@ def get_device():
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def compute_baseline_metrics(source_emb: torch.Tensor, target_emb: torch.Tensor) -> dict:
-    """Compute baseline metrics for comparison."""
+import numpy as np
+from scipy.linalg import orthogonal_procrustes
+
+def compute_baseline_metrics(source_emb: np.ndarray, target_emb: np.ndarray) -> dict:
+    """Compute baseline metrics for comparison using numpy."""
+    # Ensure inputs are numpy arrays
+    source_emb = np.asarray(source_emb)
+    target_emb = np.asarray(target_emb)
+    
     # Identity baseline (no translation)
-
-    identity_cosine = np.mean([F.cosine_similarity(
-        source_emb[i:i+1],
-        target_emb[i:i+1],
-        dim=1
-    ).item() for i in range(len(source_emb))])
-
+    # Compute cosine similarity for each pair
+    identity_cosine = np.mean([
+        compute_cosine_similarity(source_emb[i:i+1], target_emb[i:i+1])
+        for i in range(len(source_emb))
+    ])
+    
     # Random baseline
     n_samples = source_emb.shape[0]
     random_mean_rank = n_samples / 2
-
+    
     # Linear Procrustes baseline (orthogonal transformation)
-    R, _ = orthogonal_procrustes(
-        target_emb.detach().cpu().numpy(), source_emb.detach().cpu().numpy())
-    nlt_procrustes = source_emb.detach().cpu() @ R.T
-    procrustes_cosine = np.mean([F.cosine_similarity(
-        nlt_procrustes[i:i+1],
-        target_emb[i:i+1].detach().cpu(),
-        dim=1
-    ).item() for i in range(source_emb.shape[0])])
-
+    R, _ = orthogonal_procrustes(target_emb, source_emb)
+    nlt_procrustes = source_emb @ R.T
+    procrustes_cosine = np.mean([
+        compute_cosine_similarity(nlt_procrustes[i:i+1], target_emb[i:i+1])
+        for i in range(source_emb.shape[0])
+    ])
+    
     return {
         'identity_cosine': identity_cosine,
         'random_mean_rank': random_mean_rank,
         'procrustes_cosine': procrustes_cosine
     }
 
-
-def compute_retrieval_metrics(source_emb: torch.Tensor, target_emb: torch.Tensor) -> dict:
+def compute_retrieval_metrics(source_emb: np.ndarray, target_emb: np.ndarray) -> dict:
     """Compute comprehensive retrieval metrics."""
     # Compute similarities
     cosine_similarity_results = compute_cosine_similarity(
@@ -75,8 +78,8 @@ def compute_retrieval_metrics(source_emb: torch.Tensor, target_emb: torch.Tensor
 
 
 def compute_clustering_metrics(
-    embeddings: torch.Tensor,
-    labels: torch.Tensor,
+    embeddings: np.ndarray,
+    labels: np.ndarray,
     n_clusters: Optional[int] = None
 ) -> Dict[str, float]:
     """
@@ -90,32 +93,27 @@ def compute_clustering_metrics(
     Returns:
         Dictionary of clustering metrics
     """
-    with torch.no_grad():
-        embeddings = embeddings.to(get_device())
-        labels = labels.to(get_device())
-        embeddings_np = embeddings.cpu().detach().numpy()
-        labels_np = labels.cpu().detach().numpy()
 
-        if n_clusters is None:
-            n_clusters = len(np.unique(labels_np))
+    if n_clusters is None:
+        n_clusters = len(np.unique(labels))
 
-        # Perform K-means clustering
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-        cluster_labels = kmeans.fit_predict(embeddings_np)
+    # Perform K-means clustering
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    cluster_labels = kmeans.fit_predict(embeddings)
 
-        # Compute metrics
-        ari = adjusted_rand_score(labels_np, cluster_labels)
-        nmi = normalized_mutual_info_score(labels_np, cluster_labels)
+    # Compute metrics
+    ari = adjusted_rand_score(labels, cluster_labels)
+    nmi = normalized_mutual_info_score(labels, cluster_labels)
 
-        return {
-            'ari': ari,
-            'nmi': nmi
-        }
+    return {
+        'ari': ari,
+        'nmi': nmi
+    }
 
 
 def compute_cosine_similarity(
-    source_embeddings: torch.Tensor,
-    target_embeddings: torch.Tensor
+    source_embeddings: np.ndarray,
+    target_embeddings: np.ndarray
 ) -> float:
     """
     Compute mean cosine similarity between source and target embeddings.
@@ -127,135 +125,93 @@ def compute_cosine_similarity(
     Returns:
         Mean cosine similarity
     """
-    with torch.no_grad():
-        source_embeddings = source_embeddings.to(get_device())
-        target_embeddings = target_embeddings.to(get_device())
-
-        # Normalize embeddings
-        source_norm = F.normalize(source_embeddings, p=2, dim=1)
-        target_norm = F.normalize(target_embeddings, p=2, dim=1)
-
-        # Compute cosine similarity
-        cosine_sim = F.cosine_similarity(source_norm, target_norm, dim=1)
-
-        return cosine_sim.mean().item()
+    
+    # Normalize vectors to unit length
+    source_norm = source_embeddings / np.linalg.norm(source_embeddings, axis=1, keepdims=True)
+    target_norm = target_embeddings / np.linalg.norm(target_embeddings, axis=1, keepdims=True)
+    
+    # Compute cosine similarity as dot product of normalized vectors
+    cosine_sim = np.sum(source_norm * target_norm, axis=1)
+    
+    return np.mean(cosine_sim)
 
 
 def compute_top_k_accuracy(
-    source_embeddings: torch.Tensor,
-    target_embeddings: torch.Tensor,
+    source_embeddings: np.ndarray,
+    target_embeddings: np.ndarray,
     k: int = 1
 ) -> float:
     """
-    Compute Top-K accuracy for retrieval.
-
-    Args:
-        source_embeddings: Source embeddings
-        target_embeddings: Target embeddings
-        k: Number of top results to consider
-
-    Returns:
-        Top-K accuracy
+    Vectorized Top-K accuracy computation.
     """
-    with torch.no_grad():
-        source_embeddings = source_embeddings.to(get_device())
-        target_embeddings = target_embeddings.to(get_device())
-
-        # Normalize embeddings
-        source_norm = F.normalize(source_embeddings, p=2, dim=1)
-        target_norm = F.normalize(target_embeddings, p=2, dim=1)
-
-        # Compute similarity matrix
-        similarity_matrix = torch.mm(source_norm, target_norm.t())
-
-        # Get top-k indices
-        _, top_k_indices = torch.topk(similarity_matrix, k, dim=1)
-
-        # Check if correct answer is in top-k
-        correct = 0
-        for i in range(len(source_embeddings)):
-            if i in top_k_indices[i]:
-                correct += 1
-
-        return correct / len(source_embeddings)
+    source_embeddings = np.asarray(source_embeddings)
+    target_embeddings = np.asarray(target_embeddings)
+    
+    # Normalize embeddings
+    source_norm = source_embeddings / np.linalg.norm(source_embeddings, axis=1, keepdims=True)
+    target_norm = target_embeddings / np.linalg.norm(target_embeddings, axis=1, keepdims=True)
+    
+    # Compute similarity matrix
+    similarity_matrix = np.dot(source_norm, target_norm.T)
+    
+    # Get top-k indices
+    top_k_indices = np.argpartition(similarity_matrix, -k, axis=1)[:, -k:]
+    
+    # Check if diagonal elements (correct answers) are in top-k
+    diagonal_indices = np.arange(len(source_embeddings))[:, np.newaxis]
+    correct = np.any(top_k_indices == diagonal_indices, axis=1)
+    
+    return np.mean(correct)
 
 
 def compute_mean_rank(
-    source_embeddings: torch.Tensor,
-    target_embeddings: torch.Tensor
+    source_embeddings: np.ndarray,
+    target_embeddings: np.ndarray
 ) -> float:
     """
-    Compute mean rank of correct answers.
-
-    Args:
-        source_embeddings: Source embeddings
-        target_embeddings: Target embeddings
-
-    Returns:
-        Mean rank
+    Vectorized mean rank computation.
     """
-    with torch.no_grad():
-        source_embeddings = source_embeddings.to(get_device())
-        target_embeddings = target_embeddings.to(get_device())
-
-        # Normalize embeddings
-        source_norm = F.normalize(source_embeddings, p=2, dim=1)
-        target_norm = F.normalize(target_embeddings, p=2, dim=1)
-
-        # Compute similarity matrix
-        similarity_matrix = torch.mm(source_norm, target_norm.t())
-
-        # Get ranks
-        ranks = []
-        for i in range(len(source_embeddings)):
-            # Get similarity scores for this source
-            scores = similarity_matrix[i]
-            # Sort in descending order and find rank of correct answer
-            sorted_indices = torch.argsort(scores, descending=True)
-            rank = (sorted_indices == i).nonzero(
-                as_tuple=True)[0].item() + 1
-            ranks.append(rank)
-
-        return np.mean(ranks)
-
+    source_embeddings = np.asarray(source_embeddings)
+    target_embeddings = np.asarray(target_embeddings)
+    
+    # Normalize embeddings
+    source_norm = source_embeddings / np.linalg.norm(source_embeddings, axis=1, keepdims=True)
+    target_norm = target_embeddings / np.linalg.norm(target_embeddings, axis=1, keepdims=True)
+    
+    # Compute similarity matrix
+    similarity_matrix = np.dot(source_norm, target_norm.T)
+    
+    # Get ranks for all queries at once
+    sorted_indices = np.argsort(similarity_matrix, axis=1)[:, ::-1]
+    ranks = np.argmax(sorted_indices == np.arange(len(source_embeddings))[:, np.newaxis], axis=1) + 1
+    
+    return np.mean(ranks)
 
 def compute_mrr(
-    source_embeddings: torch.Tensor,
-    target_embeddings: torch.Tensor
+    source_embeddings: np.ndarray,
+    target_embeddings: np.ndarray
 ) -> float:
     """
-    Compute Mean Reciprocal Rank (MRR).
-
-    Args:
-        source_embeddings: Source embeddings
-        target_embeddings: Target embeddings
-
-    Returns:
-        MRR score
+    Vectorized MRR computation.
     """
-    with torch.no_grad():
-        source_embeddings = source_embeddings.to(get_device())
-        target_embeddings = target_embeddings.to(get_device())
-
-        # Normalize embeddings
-        source_norm = F.normalize(source_embeddings, p=2, dim=1)
-        target_norm = F.normalize(target_embeddings, p=2, dim=1)
-
-        # Compute similarity matrix
-        similarity_matrix = torch.mm(source_norm, target_norm.t())
-
-        # Get reciprocal ranks
-        reciprocal_ranks = []
-        for i in range(len(source_embeddings)):
-            # Get similarity scores for this source
-            scores = similarity_matrix[i]
-            # Sort in descending order and find rank of correct answer
-            sorted_indices = torch.argsort(scores, descending=True)
-            rank = (sorted_indices == i).nonzero(
-                as_tuple=True)[0].item() + 1
-            reciprocal_ranks.append(1.0 / rank)
-
-        return np.mean(reciprocal_ranks)
+    source_embeddings = np.asarray(source_embeddings)
+    target_embeddings = np.asarray(target_embeddings)
+    
+    # Normalize embeddings
+    source_norm = source_embeddings / np.linalg.norm(source_embeddings, axis=1, keepdims=True)
+    target_norm = target_embeddings / np.linalg.norm(target_embeddings, axis=1, keepdims=True)
+    
+    # Compute similarity matrix
+    similarity_matrix = np.dot(source_norm, target_norm.T)
+    
+    # Get ranks for all queries at once
+    sorted_indices = np.argsort(similarity_matrix, axis=1)[:, ::-1]
+    ranks = np.argmax(sorted_indices == np.arange(len(source_embeddings))[:, np.newaxis], axis=1) + 1
+    
+    # Compute reciprocal ranks
+    reciprocal_ranks = 1.0 / ranks
+    
+    return np.mean(reciprocal_ranks)
 
 
 def create_evaluation_table(results: dict, save_dir: str = "logs/cm_vec2vec") -> str:
@@ -364,81 +320,125 @@ def create_evaluation_table(results: dict, save_dir: str = "logs/cm_vec2vec") ->
 
 
 def plot_embeddings(
-    nlt_embeddings: torch.Tensor,
-    cmt_embeddings: torch.Tensor,
-    translated_nlt: Optional[torch.Tensor] = None,
-    translated_cmt: Optional[torch.Tensor] = None,
-    save_path: str = "logs/cm_vec2vec"
+    nlt_embeddings: np.ndarray,
+    cmt_embeddings: np.ndarray,
+    translated_nlt: Optional[np.ndarray] = None,
+    translated_cmt: Optional[np.ndarray] = None,
+    save_path: str = "logs/cm_vec2vec",
+    methods: Optional[list] = None,
+    figsize: tuple = (15, 10)
 ):
     """
-    Plot embeddings using dimensionality reduction.
+    Enhanced plot embeddings with better visualization options.
 
     Args:
-        nlt_embeddings: Original NL embeddings
-        cmt_embeddings: Original CM embeddings
-        translated_nlt: Translated NL embeddings (optional)
-        translated_cmt: Translated CM embeddings (optional)
-        method: Dimensionality reduction method ('tsne', 'pca', 'umap')
+        nlt_embeddings: Original NL embeddings (numpy array)
+        cmt_embeddings: Original CM embeddings (numpy array)
+        translated_nlt: Translated NL embeddings (optional, numpy array)
+        translated_cmt: Translated CM embeddings (optional, numpy array)
         save_path: Optional path to save the plot
+        methods: List of methods to use ['tsne', 'pca', 'umap'] (default: all)
+        figsize: Figure size tuple
     """
+    # Ensure inputs are numpy arrays
+    nlt_embeddings = np.asarray(nlt_embeddings)
+    cmt_embeddings = np.asarray(cmt_embeddings)
+    
+    if methods is None:
+        methods = ['tsne', 'pca', 'umap']
+    
+    # Prepare data
+    all_embeddings = []
+    all_labels = []
+    label_names = []
 
-    with torch.no_grad():
-        # Prepare data
-        all_embeddings = []
-        all_labels = []
-        label_names = []
+    # Add original embeddings
+    all_embeddings.append(nlt_embeddings)
+    all_embeddings.append(cmt_embeddings)
+    all_labels.extend(['NLT'] * len(nlt_embeddings))
+    all_labels.extend(['CMT'] * len(cmt_embeddings))
+    label_names.extend(['Original NLT', 'Original CMT'])
 
-        # Add original embeddings
-        nlt_np = nlt_embeddings.cpu().numpy()
-        cmt_np = cmt_embeddings.cpu().numpy()
+    # Add translated embeddings if provided
+    if translated_nlt is not None:
+        translated_nlt = np.asarray(translated_nlt)
+        all_embeddings.append(translated_nlt)
+        all_labels.extend(['Translated NLT'] * len(translated_nlt))
+        label_names.append('Translated NLT')
 
-        all_embeddings.append(nlt_np)
-        all_embeddings.append(cmt_np)
-        all_labels.extend(['NLT'] * len(nlt_np))
-        all_labels.extend(['CMT'] * len(cmt_np))
-        label_names.extend(['Original NLT', 'Original CMT'])
+    if translated_cmt is not None:
+        translated_cmt = np.asarray(translated_cmt)
+        all_embeddings.append(translated_cmt)
+        all_labels.extend(['Translated CMT'] * len(translated_cmt))
+        label_names.append('Translated CMT')
 
-        # Add translated embeddings if provided
-        if translated_nlt is not None:
-            trans_nlt_np = translated_nlt.cpu().numpy()
-            all_embeddings.append(trans_nlt_np)
-            all_labels.extend(['Translated NLT'] * len(trans_nlt_np))
-            label_names.append('Translated NLT')
+    # Stack all embeddings
+    all_embeddings = np.vstack(all_embeddings)
 
-        if translated_cmt is not None:
-            trans_cmt_np = translated_cmt.cpu().numpy()
-            all_embeddings.append(trans_cmt_np)
-            all_labels.extend(['Translated CMT'] * len(trans_cmt_np))
-            label_names.append('Translated CMT')
+    # Define dimensionality reduction methods
+    reducers = {
+        'tsne': TSNE(n_components=2, random_state=42, perplexity=30),
+        'pca': PCA(n_components=2, random_state=42),
+        'umap': UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
+    }
+    
+    # Create save directory if it doesn't exist
+    os.makedirs(save_path, exist_ok=True)
+    
+    # Create subplots if multiple methods
+    if len(methods) > 1:
+        fig, axes = plt.subplots(1, len(methods), figsize=figsize)
+        if len(methods) == 1:
+            axes = [axes]
+    else:
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+        axes = [ax]
+    
+    for idx, method in enumerate(methods):
+        if method not in reducers:
+            print(f"Warning: Method {method} not supported. Skipping.")
+            continue
+            
+        reducer = reducers[method]
+        ax = axes[idx] if len(methods) > 1 else axes[0]
+        
+        # Dimensionality reduction
+        print(f"Dimensionality reduction with {method}")
+        reduced_embeddings = reducer.fit_transform(all_embeddings)
+        print(f"Reduced embeddings shape: {reduced_embeddings.shape}")
 
-        all_embeddings = np.vstack(all_embeddings)
-
-        methods = {
-            'tsne': TSNE(n_components=2, random_state=42),
-            'pca': PCA(n_components=2, random_state=42),
-            'umap': UMAP(n_components=2, random_state=42)
-        }
-        for method, reducer in methods.items():
-            # Plot for all methods in subplots
-
-            # Dimensionality reduction
-            print(f"Dimensionality reduction with {method}")
-            reduced_embeddings = reducer.fit_transform(all_embeddings)
-            print(f"Reduced embeddings shape: {reduced_embeddings.shape}")
-
-            # Create plot
-            plt.figure(figsize=(12, 8))
-            unique_labels = list(set(all_labels))
-            colors = plt.cm.Set1(np.linspace(0, 1, len(unique_labels)))
-
-            plt.title(f"Embeddings Visualization ({method.upper()})")
-            plt.xlabel(f"{method.upper()} 1")
-            plt.ylabel(f"{method.upper()} 2")
-
-            plt.scatter(
-                reduced_embeddings[:, 0], reduced_embeddings[:, 1], c=colors, label=label_names)
-            # Plot by type
-            plt.legend()
-            plt.savefig(os.path.join(
-                save_path, f"{method}.png"), dpi=300, bbox_inches='tight')
-            plt.show()
+        # Define colors and markers for different types
+        unique_labels = list(set(all_labels))
+        colors = plt.cm.Set1(np.linspace(0, 1, len(unique_labels)))
+        markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h']
+        
+        # Plot by type with proper color and marker mapping
+        for i, label in enumerate(unique_labels):
+            mask = np.array(all_labels) == label
+            ax.scatter(
+                reduced_embeddings[mask, 0], 
+                reduced_embeddings[mask, 1], 
+                c=[colors[i]], 
+                label=label,
+                alpha=0.7,
+                s=50,
+                marker=markers[i % len(markers)],
+                edgecolors='black',
+                linewidth=0.5
+            )
+        
+        ax.set_title(f"Embeddings Visualization ({method.upper()})", fontsize=14, fontweight='bold')
+        ax.set_xlabel(f"{method.upper()} 1", fontsize=12)
+        ax.set_ylabel(f"{method.upper()} 2", fontsize=12)
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    # Save plot
+    if len(methods) > 1:
+        plt.savefig(os.path.join(save_path, "embeddings_comparison.png"), dpi=300, bbox_inches='tight')
+    else:
+        plt.savefig(os.path.join(save_path, f"{methods[0]}.png"), dpi=300, bbox_inches='tight')
+    
+    plt.show()

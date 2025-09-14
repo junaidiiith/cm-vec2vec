@@ -11,7 +11,7 @@ from cm_vec2vec.parse_args import parse_args
 
 def test_end_to_end():
     """Test complete end-to-end workflow."""
-    
+
     args = parse_args()
     print("CMVec2Vec End-to-End Test")
     print("=" * 50)
@@ -59,7 +59,7 @@ def test_end_to_end():
     print("\n3. Testing trainer creation...")
     save_dir = os.path.join(args.save_dir, args.dataset)
     os.makedirs(save_dir, exist_ok=True)
-    evaluator = CMVec2VecEvaluator(model, save_dir=save_dir)
+    evaluator = CMVec2VecEvaluator(model=model, save_dir=save_dir)
     trainer = CMVec2VecTrainer(
         model=model,
         lr_generator=args.lr_generator,
@@ -121,7 +121,7 @@ def test_end_to_end():
     train_fn = trainer.enhanced_train if args.enhanced_losses else trainer.train
     train_fn(
         train_loader, val_loader, epochs=args.epochs,
-        save_every=args.save_every, 
+        save_every=args.save_every,
         early_stopping_patience=args.early_stopping_patience
     )
 
@@ -136,7 +136,7 @@ def test_end_to_end():
 
     # Test evaluation
     print("\n6. Testing evaluation...")
-    
+
     results = evaluator.evaluate_loader(test_loader, plot=args.save_plots, save_table=args.save_table)
     print(f"   Evaluation results: {results}")
     with open(os.path.join(save_dir, f'evaluation_results.json'), 'w') as f:

@@ -57,23 +57,22 @@ class CMVec2VecEvaluator:
         else:
             raise ValueError(f"Invalid transition: {transition}")
 
-    def get_nlt_to_cmt_embeddings(self, batch: Union[torch.Tensor, DataLoader], condition: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def get_nlt_to_cmt_embeddings(self, embeddings: torch.Tensor, condition: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
-        Get embeddings from a batch.
+        Get NL -> CM embeddings.
         """ 
-        return self._get_translated_batch_embeddings(batch, condition, transition='nlt2cmt')
+        return self._get_translated_batch_embeddings(embeddings, condition, transition='nlt2cmt')
 
-    def get_cmt_to_nlt_embeddings(self, batch: Union[torch.Tensor, DataLoader], condition: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def get_cmt_to_nlt_embeddings(self, embeddings: torch.Tensor, condition: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
-        Get embeddings from a batch.    
+        Get CM -> NL embeddings.    
         """
-        return self._get_translated_batch_embeddings(batch, condition, transition='cmt2nlt')
+        return self._get_translated_batch_embeddings(embeddings, condition, transition='cmt2nlt')
 
 
     def compute_cycle_consistency_metrics(
         self,
-        nlt_embeddings: torch.Tensor,
-        cmt_embeddings: torch.Tensor,
+        dataloader: DataLoader,
         condition: Optional[torch.Tensor] = None
     ) -> Dict[str, float]:
         """
@@ -87,48 +86,60 @@ class CMVec2VecEvaluator:
         Returns:
             Dictionary of cycle consistency metrics
         """
+        cycle_nlts, cycle_cmts = list(), list()
+        nlt_embeddings_list, cmt_embeddings_list = list(), list()
         with torch.no_grad():
-            nlt_embeddings = nlt_embeddings.to(self.device)
-            cmt_embeddings = cmt_embeddings.to(self.device)
-            if condition is not None:
-                condition = condition.to(self.device)
+            for batch in dataloader:
+                nlt_embeddings: torch.Tensor = batch['nlt'].to(self.device)
+                cmt_embeddings: torch.Tensor = batch['cmt'].to(self.device)
+                if condition is not None:
+                    condition: torch.Tensor = condition.to(self.device)
+                nlt_embeddings_list.append(nlt_embeddings.cpu().detach().numpy())
+                cmt_embeddings_list.append(cmt_embeddings.cpu().detach().numpy())
+                
+                # Forward translation: NL -> CM
+                forward_translated = self.model.translate_nlt_to_cmt(
+                    nlt_embeddings, condition
+                )
 
-            # Forward translation: NL -> CM
-            forward_translated = self.model.translate_nlt_to_cmt(
-                nlt_embeddings, condition
-            )
+                # Backward translation: CM -> NL
+                backward_translated = self.model.translate_cmt_to_nlt(
+                    cmt_embeddings, condition
+                )
 
-            # Backward translation: CM -> NL
-            backward_translated = self.model.translate_cmt_to_nlt(
-                cmt_embeddings, condition
-            )
+                # Cycle consistency: NL -> CM -> NL
+                cycle_nlt = self.model.translate_cmt_to_nlt(
+                    forward_translated, condition
+                )
 
-            # Cycle consistency: NL -> CM -> NL
-            cycle_nlt = self.model.translate_cmt_to_nlt(
-                forward_translated, condition
-            )
+                # Cycle consistency: CM -> NL -> CM
+                cycle_cmt = self.model.translate_nlt_to_cmt(
+                    backward_translated, condition
+                )
+                
+                cycle_nlts.append(cycle_nlt.cpu().detach().numpy())
+                cycle_cmts.append(cycle_cmt.cpu().detach().numpy())
+                
+        cycle_nlts = np.concatenate(cycle_nlts, axis=0)
+        cycle_cmts = np.concatenate(cycle_cmts, axis=0)
+        nlt_embeddings = np.concatenate(nlt_embeddings_list, axis=0)
+        cmt_embeddings = np.concatenate(cmt_embeddings_list, axis=0)
 
-            # Cycle consistency: CM -> NL -> CM
-            cycle_cmt = self.model.translate_nlt_to_cmt(
-                backward_translated, condition
-            )
+        # Compute cycle similarities
+        nlt_cycle_sim = compute_cosine_similarity(
+            nlt_embeddings, cycle_nlts)
+        cmt_cycle_sim = compute_cosine_similarity(
+            cmt_embeddings, cycle_cmts)
 
-            # Compute cycle similarities
-            nlt_cycle_sim = compute_cosine_similarity(
-                nlt_embeddings, cycle_nlt)
-            cmt_cycle_sim = compute_cosine_similarity(
-                cmt_embeddings, cycle_cmt)
-
-            return {
-                'nlt_cycle_similarity': nlt_cycle_sim,
-                'cmt_cycle_similarity': cmt_cycle_sim,
-                'mean_cycle_similarity': (nlt_cycle_sim + cmt_cycle_sim) / 2
-            }
+        return {
+            'nlt_cycle_similarity': nlt_cycle_sim,
+            'cmt_cycle_similarity': cmt_cycle_sim,
+            'mean_cycle_similarity': (nlt_cycle_sim + cmt_cycle_sim) / 2
+        }
 
     def compute_geometry_preservation_metrics(
         self,
-        nlt_embeddings: torch.Tensor,
-        cmt_embeddings: torch.Tensor,
+        dataloader: DataLoader,
         condition: Optional[torch.Tensor] = None
     ) -> Dict[str, float]:
         """
@@ -142,100 +153,113 @@ class CMVec2VecEvaluator:
         Returns:
             Dictionary of geometry preservation metrics
         """
+        
+        translated_nlts, translated_cmts = list(), list()
+        nlt_embeddings_list, cmt_embeddings_list = list(), list()
         with torch.no_grad():
-            nlt_embeddings = nlt_embeddings.to(self.device)
-            cmt_embeddings = cmt_embeddings.to(self.device)
-            if condition is not None:
-                condition = condition.to(self.device)
+            for batch in dataloader:
+                nlt_embeddings: torch.Tensor = batch['nlt'].to(self.device)
+                cmt_embeddings: torch.Tensor = batch['cmt'].to(self.device)
 
-            # Translate NL to CM
-            translated_nlt = self.model.translate_nlt_to_cmt(
-                nlt_embeddings, condition
-            )
+                if condition is not None:
+                    condition: torch.Tensor = condition.to(self.device)
 
-            # Translate CM to NL
-            translated_cmt = self.model.translate_cmt_to_nlt(
-                cmt_embeddings, condition
-            )
+                # Translate NL to CM
+                translated_nlt = self.model.translate_nlt_to_cmt(
+                    nlt_embeddings, condition
+                )
+
+                # Translate CM to NL
+                translated_cmt = self.model.translate_cmt_to_nlt(
+                    cmt_embeddings, condition
+                )
+                
+                translated_nlts.append(translated_nlt.cpu().detach().numpy())
+                translated_cmts.append(translated_cmt.cpu().detach().numpy())
+                nlt_embeddings_list.append(nlt_embeddings.cpu().detach().numpy())
+                cmt_embeddings_list.append(cmt_embeddings.cpu().detach().numpy())
+                
+        
+        def normalize(embeddings: np.ndarray) -> np.ndarray:
+            return embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
+        
+        translated_nlts = normalize(np.concatenate(translated_nlts, axis=0))
+        translated_cmts = normalize(np.concatenate(translated_cmts, axis=0))
+        nlt_embeddings = normalize(np.concatenate(nlt_embeddings_list, axis=0))
+        cmt_embeddings = normalize(np.concatenate(cmt_embeddings_list, axis=0))
+        
 
             # Compute pairwise similarities
-            nlt_sim = torch.mm(nlt_embeddings, nlt_embeddings.t())
-            translated_nlt_sim = torch.mm(
-                translated_nlt, translated_nlt.t())
+        nlt_sim = np.dot(nlt_embeddings, nlt_embeddings.T)
+        translated_nlt_sim = np.dot(translated_nlts, translated_nlts.T)
 
-            cmt_sim = torch.mm(cmt_embeddings, cmt_embeddings.t())
-            translated_cmt_sim = torch.mm(
-                translated_cmt, translated_cmt.t())
+        cmt_sim = np.dot(cmt_embeddings, cmt_embeddings.T)
+        translated_cmt_sim = np.dot(translated_cmts, translated_cmts.T)
 
-            def safe_correlation(x, y):
-                """Compute correlation with NaN handling."""
-                try:
-                    # Check for constant values (no variance)
-                    if torch.std(x) < 1e-8 or torch.std(y) < 1e-8:
-                        return 0.0
-
-                    # Compute correlation
-                    corr = torch.corrcoef(torch.stack([x, y]))[0, 1]
-
-                    # Handle NaN values
-                    if torch.isnan(corr):
-                        return 0.0
-
-                    return corr.item()
-                except Exception:
+        def safe_correlation(x: np.ndarray, y: np.ndarray) -> float:
+            """Compute correlation with NaN handling."""
+            try:
+                # Check for constant values (no variance)
+                if np.std(x) < 1e-8 or np.std(y) < 1e-8:
                     return 0.0
 
-            # Compute correlations with error handling
-            nlt_corr = safe_correlation(
-                nlt_sim.flatten(), translated_nlt_sim.flatten()
-            )
+                # Compute correlation
+                corr = np.corrcoef(np.stack([x, y]))[0, 1]
 
-            cmt_corr = safe_correlation(
-                cmt_sim.flatten(), translated_cmt_sim.flatten()
-            )
+                # Handle NaN values
+                if np.isnan(corr):
+                    return 0.0
 
-            return {
-                'nlt_geometry_correlation': nlt_corr,
-                'cmt_geometry_correlation': cmt_corr,
-                'mean_geometry_correlation': (nlt_corr + cmt_corr) / 2
-            }
+                return corr
+            except Exception:
+                return 0.0
+
+        # Compute correlations with error handling
+        nlt_corr = safe_correlation(nlt_sim, translated_nlt_sim)
+        cmt_corr = safe_correlation(cmt_sim, translated_cmt_sim)
+
+        return {
+            'nlt_geometry_correlation': nlt_corr,
+            'cmt_geometry_correlation': cmt_corr,
+            'mean_geometry_correlation': (nlt_corr + cmt_corr) / 2
+        }
     
     def evaluate(
         self, 
-        nlt_embeddings: torch.Tensor, 
-        cmt_embeddings: torch.Tensor, 
-        nlt_labels: Optional[torch.Tensor] = None, 
-        cmt_labels: Optional[torch.Tensor] = None, 
+        dataloader: DataLoader,
         condition: Optional[torch.Tensor] = None, 
         plot: bool = False
     ) -> Dict[str, Any]:
         """
         Evaluate embeddings.
         """
+        
         all_results = {}
         
-        nlt_to_cmt_embeddings = self.get_nlt_to_cmt_embeddings(nlt_embeddings, condition=condition)
-        cmt_to_nlt_embeddings = self.get_cmt_to_nlt_embeddings(cmt_embeddings, condition=condition)
+        # Cycle consistency
+        cycle_consistency_results = self.compute_cycle_consistency_metrics(dataloader, condition=condition)
         
-        nlt_to_cmt_translation_results = compute_retrieval_metrics(nlt_to_cmt_embeddings, cmt_embeddings)
-        cmt_to_nlt_translation_results = compute_retrieval_metrics(cmt_to_nlt_embeddings, nlt_embeddings)
+        # Geometry preservation
+        geometry_preservation_results = self.compute_geometry_preservation_metrics(dataloader, condition=condition)
         
-        retrieval_results = dict()
-        for k, v in nlt_to_cmt_translation_results.items():
-            retrieval_results[f'nlt2cmt_{k}'] = v
-        for k, v in cmt_to_nlt_translation_results.items():
-            retrieval_results[f'cmt2nlt_{k}'] = v
+        # Clustering
+        nlt_embeddings = np.concatenate([batch['nlt'].cpu().numpy() for batch in dataloader], axis=0)
+        cmt_embeddings = np.concatenate([batch['cmt'].cpu().numpy() for batch in dataloader], axis=0)
         
-        cycle_consistency_results = self.compute_cycle_consistency_metrics(nlt_embeddings, cmt_embeddings, condition=condition)
+        def get_labels(loader: DataLoader, key: str) -> Optional[np.ndarray]:
+            labels = [batch[key] if key in batch else None for batch in loader]
+            if labels and labels[0] is not None:
+                return np.concatenate([np.array(label) for label in labels], axis=0)
+            return None
         
-        geometry_preservation_results = self.compute_geometry_preservation_metrics(nlt_embeddings, cmt_embeddings, condition=condition)
-        
+        nlt_labels = get_labels(dataloader, 'nlt_label')
+        cmt_labels = get_labels(dataloader, 'cmt_label')
         
         nlt_clustering_results = compute_clustering_metrics(
-            nlt_embeddings, nlt_labels, condition=condition
+            nlt_embeddings, nlt_labels
         ) if nlt_labels and nlt_labels[0] is not None else None
         cmt_clustering_results = compute_clustering_metrics(
-            cmt_embeddings, cmt_labels, condition=condition
+            cmt_embeddings, cmt_labels
         ) if cmt_labels and cmt_labels[0] is not None else None
         
         clustering_results = {}
@@ -246,6 +270,28 @@ class CMVec2VecEvaluator:
             for k, v in cmt_clustering_results.items():
                 clustering_results[f'cmt_clustering_{k}'] = v
         
+        # Retrieval metrics
+        nlt_to_cmt_embeddings, cmt_to_nlt_embeddings = list(), list()
+        with torch.no_grad():
+            for batch in dataloader:
+                nlt2cmt_emb = self.get_nlt_to_cmt_embeddings(batch['nlt'], condition=condition)
+                cmt2nlt_emb = self.get_cmt_to_nlt_embeddings(batch['cmt'], condition=condition)
+                nlt_to_cmt_embeddings.append(nlt2cmt_emb.cpu().detach().numpy())
+                cmt_to_nlt_embeddings.append(cmt2nlt_emb.cpu().detach().numpy())
+        
+        nlt_to_cmt_embeddings = np.concatenate(nlt_to_cmt_embeddings, axis=0)
+        cmt_to_nlt_embeddings = np.concatenate(cmt_to_nlt_embeddings, axis=0)
+        
+        nlt_to_cmt_translation_results = compute_retrieval_metrics(nlt_to_cmt_embeddings, cmt_embeddings)
+        cmt_to_nlt_translation_results = compute_retrieval_metrics(cmt_to_nlt_embeddings, nlt_embeddings)
+        
+        retrieval_results = dict()
+        for k, v in nlt_to_cmt_translation_results.items():
+            retrieval_results[f'nlt2cmt_{k}'] = v
+        for k, v in cmt_to_nlt_translation_results.items():
+            retrieval_results[f'cmt2nlt_{k}'] = v
+        
+        # Baseline metrics
         baseline_nlt_to_cmt_results = compute_baseline_metrics(nlt_to_cmt_embeddings, cmt_embeddings)
         baseline_cmt_to_nlt_results = compute_baseline_metrics(cmt_to_nlt_embeddings, nlt_embeddings)
         
@@ -255,6 +301,7 @@ class CMVec2VecEvaluator:
         for k, v in baseline_cmt_to_nlt_results.items():
             baseline_results[f'baseline_cmt_to_nlt_{k}'] = v
         
+        # Plot embeddings
         if plot:
             plot_embeddings(
                 nlt_embeddings, 
@@ -265,6 +312,7 @@ class CMVec2VecEvaluator:
                 save_path=self.save_dir
             )
         
+        # Combine results
         result_types = {
             'cycle_consistency_results': cycle_consistency_results,
             'geometry_preservation_results': geometry_preservation_results,
@@ -289,19 +337,8 @@ class CMVec2VecEvaluator:
         """
         Evaluate a loader of embeddings.
         """
-
-        def get_labels(loader: DataLoader, key: str) -> Optional[torch.Tensor]:
-            labels = [batch[key] if key in batch else None for batch in loader]
-            if labels and labels[0] is not None:
-                return torch.cat([torch.tensor(label) for label in labels], dim=0).to(self.device)
-            return None
         
-        nlt_embeddings = torch.cat([batch['nlt'] for batch in loader], dim=0).to(self.device)
-        nlt_labels = get_labels(loader, 'nlt_label')
-        cmt_embeddings = torch.cat([batch['cmt'] for batch in loader], dim=0).to(self.device)
-        cmt_labels = get_labels(loader, 'cmt_label')
-        
-        results = self.evaluate(nlt_embeddings, cmt_embeddings, nlt_labels, cmt_labels, condition, plot)
+        results = self.evaluate(loader, condition, plot)
         if save_table:
             print("Evaluation Table:")
             print(create_evaluation_table(results))
