@@ -8,7 +8,7 @@ try:
 except ImportError:
     HAS_TOML = False
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from pathlib import Path
 
 
@@ -114,13 +114,12 @@ def create_default_config() -> Dict[str, Any]:
             'early_stopping_patience': 20
         },
         'data': {
-            'data_path': 'data/embeddings.pkl',
-            'domains': ['nl', 'cm'],
+            'data_path': 'datasets/embeddings_dfs',
             'test_size': 0.2,
             'val_size': 0.1,
             'random_state': 42,
             'normalize': True,
-            'noise_level': 0.0
+            'noise_level': 0.1
         },
         'evaluation': {
             'n_eval_samples': 1000,
@@ -199,7 +198,7 @@ def validate_config(config: Dict[str, Any]) -> bool:
 
     # Validate data configuration
     data_config = config['data']
-    required_data_keys = ['data_path', 'domains']
+    required_data_keys = ['data_path']
 
     for key in required_data_keys:
         if key not in data_config:
@@ -246,7 +245,6 @@ def create_config_from_args(args: Dict[str, Any]) -> Dict[str, Any]:
         'save_every': 'training.save_every',
         'early_stopping_patience': 'training.early_stopping_patience',
         'data_path': 'data.data_path',
-        'domains': 'data.domains',
         'test_size': 'data.test_size',
         'val_size': 'data.val_size',
         'random_state': 'data.random_state',

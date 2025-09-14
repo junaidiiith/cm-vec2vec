@@ -1,0 +1,33 @@
+{
+    "cycle_consistency_results": {
+        "nlt_cycle_similarity": 0.0006154729053378105,
+        "cmt_cycle_similarity": 0.008970574475824833,
+        "mean_cycle_similarity": 0.004793023690581322
+    },
+    "geometry_preservation_results": {
+        "nlt_geometry_correlation": 0.675154983997345,
+        "cmt_geometry_correlation": 0.7301669716835022,
+        "mean_geometry_correlation": 0.7026609778404236
+    },
+    "baseline_results": {
+        "baseline_nlt_to_cmt_identity_cosine": 0.015072618955212414,
+        "baseline_nlt_to_cmt_random_mean_rank": 78.5,
+        "baseline_nlt_to_cmt_procrustes_cosine": 0.6453130355306492,
+        "baseline_cmt_to_nlt_identity_cosine": -0.01312242028493268,
+        "baseline_cmt_to_nlt_random_mean_rank": 78.5,
+        "baseline_cmt_to_nlt_procrustes_cosine": 0.7341444815040394
+    },
+    "clustering_results": {},
+    "retrieval_results": {
+        "nlt2cmt_cosine_similarity_results": 0.015072619542479515,
+        "nlt2cmt_top_1_accuracy_results": 0.012738853503184714,
+        "nlt2cmt_top_5_accuracy_results": 0.044585987261146494,
+        "nlt2cmt_top_10_accuracy_results": 0.07006369426751592,
+        "nlt2cmt_mrr_results": 0.044274556592941924,
+        "cmt2nlt_cosine_similarity_results": -0.013122418895363808,
+        "cmt2nlt_top_1_accuracy_results": 0.012738853503184714,
+        "cmt2nlt_top_5_accuracy_results": 0.03184713375796178,
+        "cmt2nlt_top_10_accuracy_results": 0.07643312101910828,
+        "cmt2nlt_mrr_results": 0.04217505706314963
+    }
+}

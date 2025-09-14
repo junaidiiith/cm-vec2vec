@@ -218,6 +218,12 @@ def parse_args():
         default=1.0,
         help='Weight for latent adversarial loss'
     )
+    
+    loss_group.add_argument(
+        '--enhanced_losses',
+        action='store_true',
+        help='Use enhanced loss functions'
+    )
 
     # =============================================================================
     # CHECKPOINTING AND SAVING ARGUMENTS
@@ -258,6 +264,11 @@ def parse_args():
         help='Save embedding visualization plots'
     )
     eval_group.add_argument(
+        '--save_table',
+        action='store_true',
+        help='Save evaluation table'
+    )
+    eval_group.add_argument(
         '--output_dir',
         type=str,
         default='logs/cm_vec2vec',
@@ -284,7 +295,7 @@ def get_loss_weights(args):
         'cycle_consistency': args.cycle_consistency_weight,
         'vsp': args.vsp_weight,
         'adversarial': args.adversarial_weight,
-        'latent_adversarial': args.latent_adversarial_weight
+        'latent_adversarial': args.latent_adversarial_weight,
     }
 
     # Override with custom loss_weights if provided

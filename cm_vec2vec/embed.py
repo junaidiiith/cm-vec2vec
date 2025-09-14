@@ -9,7 +9,7 @@ from langchain_openai import OpenAIEmbeddings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 from typing import List
-from nl2cm.utils import get_device
+from cm_vec2vec.utils import get_device
 
 
 load_dotenv()

@@ -74,7 +74,6 @@ def test_end_to_end():
         save_dir=save_dir,
         evaluator=evaluator
     )
-
     print("   ✓ Trainer and evaluator creation successful!")
     print("Loss Weights:")
     print(f"   Reconstruction: {args.reconstruction_weight}")
@@ -82,10 +81,45 @@ def test_end_to_end():
     print(f"   VSP: {args.vsp_weight}")
     print(f"   Adversarial: {args.adversarial_weight}")
     print(f"   Latent Adversarial: {args.latent_adversarial_weight}")
+    print(f"   Enhanced Losses: {args.enhanced_losses}")
+    print(f"   Save Table: {args.save_table}")
+    print(f"   Save Plots: {args.save_plots}")
+    print(f"   Save Dir: {save_dir}")
+    print(f"   Dataset: {args.dataset}")
+    print(f"   Data Path: {data_path}")
+    print(f"   NL Col: {args.nl_col}")
+    print(f"   CM Col: {args.cm_col}")
+    print(f"   Test Size: {args.test_size}")
+    print(f"   Seed: {args.seed}")
+    print(f"   Num Workers: {args.num_workers}")
+    print(f"   Epochs: {args.epochs}")
+    print(f"   Save Every: {args.save_every}")
+    print(f"   Early Stopping Patience: {args.early_stopping_patience}")
+    print(f"   LR Generator: {args.lr_generator}")
+    print(f"   LR Discriminator: {args.lr_discriminator}")
+    print(f"   Embedding Dim: {args.embedding_dim}")
+    print(f"   Latent Dim: {args.latent_dim}")
+    print(f"   Hidden Dim: {args.hidden_dim}")
+    print(f"   Adapter Depth: {args.adapter_depth}")
+    print(f"   Backbone Depth: {args.backbone_depth}")
+    print(f"   Save Dir: {save_dir}")
+    print(f"   Dataset: {args.dataset}")
+    print(f"   Data Path: {data_path}")
+    print(f"   NL Col: {args.nl_col}")
+    print(f"   CM Col: {args.cm_col}")
+    print(f"   Test Size: {args.test_size}")
+    print(f"   Seed: {args.seed}")
+    print(f"   Num Workers: {args.num_workers}")
+    print(f"   Epochs: {args.epochs}")
+    print(f"   Save Every: {args.save_every}")
+    print(f"   Early Stopping Patience: {args.early_stopping_patience}")
+    print(f"   LR Generator: {args.lr_generator}")
+    print(f"   LR Discriminator: {args.lr_discriminator}")
 
     # Test training step
     print("\n4. Testing training step...")
-    trainer.train(
+    train_fn = trainer.enhanced_train if args.enhanced_losses else trainer.train
+    train_fn(
         train_loader, val_loader, epochs=args.epochs,
         save_every=args.save_every, 
         early_stopping_patience=args.early_stopping_patience
@@ -95,14 +129,15 @@ def test_end_to_end():
 
     # Test validation
     print("\n5. Testing validation...")
-    val_losses = trainer.validate(val_loader)
+    val_fn = trainer.enhanced_validate if args.enhanced_losses else trainer.validate
+    val_losses = val_fn(val_loader, save_table=args.save_table)
     print(f"   Validation losses: {val_losses}")
     print(f"   ✓ Validation successful! with losses: {val_losses}")
 
     # Test evaluation
     print("\n6. Testing evaluation...")
     
-    results = evaluator.evaluate_loader(test_loader)
+    results = evaluator.evaluate_loader(test_loader, plot=args.save_plots, save_table=args.save_table)
     print(f"   Evaluation results: {results}")
     with open(os.path.join(save_dir, f'evaluation_results.json'), 'w') as f:
         json.dump(results, f)

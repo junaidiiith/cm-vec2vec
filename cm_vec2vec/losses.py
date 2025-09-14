@@ -304,3 +304,142 @@ def compute_all_losses(
     losses['total'] = total_loss
 
     return losses
+
+
+def enhanced_vector_space_preservation_loss(
+    source_embeddings: torch.Tensor,
+    target_embeddings: torch.Tensor,
+    temperature: float = 1.0
+) -> torch.Tensor:
+    """
+    Enhanced VSP loss with temperature scaling and stability improvements.
+
+    Args:
+        source_embeddings: Source embeddings
+        target_embeddings: Target embeddings  
+        temperature: Temperature for softmax scaling
+
+    Returns:
+        Enhanced VSP loss
+    """
+    # Normalize embeddings for stability
+    source_norm = F.normalize(source_embeddings, p=2, dim=1)
+    target_norm = F.normalize(target_embeddings, p=2, dim=1)
+
+    # Compute pairwise similarities with temperature
+    source_sim = torch.mm(source_norm, source_norm.t()) / temperature
+    target_sim = torch.mm(target_norm, target_norm.t()) / temperature
+
+    # Use KL divergence instead of MSE for better gradient flow
+    source_softmax = F.softmax(source_sim, dim=1)
+    target_softmax = F.softmax(target_sim, dim=1)
+
+    # KL divergence loss
+    kl_loss = F.kl_div(
+        target_softmax.log(),
+        source_softmax,
+        reduction='batchmean'
+    )
+
+    return kl_loss
+
+
+def focal_adversarial_loss(
+    real_scores: torch.Tensor,
+    fake_scores: torch.Tensor,
+    alpha: float = 1.0,
+    gamma: float = 2.0,
+    gan_type: str = 'least_squares'
+) -> torch.Tensor:
+    """
+    Focal adversarial loss to focus on hard examples.
+
+    Args:
+        real_scores: Real discriminator scores
+        fake_scores: Fake discriminator scores
+        alpha: Weighting factor
+        gamma: Focusing parameter
+        gan_type: Type of GAN loss
+
+    Returns:
+        Focal adversarial loss
+    """
+    if gan_type == 'least_squares':
+        # Compute standard least squares loss
+        real_loss = torch.mean((real_scores - 1) ** 2)
+        fake_loss = torch.mean(fake_scores ** 2)
+
+        # Apply focal weighting
+        real_weight = alpha * (real_loss ** gamma)
+        fake_weight = (1 - alpha) * (fake_loss ** gamma)
+
+        return real_weight + fake_weight
+    else:
+        # Fallback to standard adversarial loss
+        return torch.mean((fake_scores - 1) ** 2)
+
+
+def cycle_consistency_loss_with_margin(
+    translations: Dict[str, torch.Tensor],
+    inputs: Dict[str, torch.Tensor],
+    margin: float = 0.1
+) -> torch.Tensor:
+    """
+    Cycle consistency loss with margin for better training stability.
+
+    Args:
+        translations: Translated embeddings
+        inputs: Original input embeddings
+        margin: Margin for loss computation
+
+    Returns:
+        Margin-based cycle consistency loss
+    """
+    total_loss = 0.0
+    count = 0
+
+    # NL -> CM -> NL cycle
+    if 'nlt' in translations and 'nlt' in inputs:
+        diff = torch.abs(translations['nlt'] - inputs['nlt'])
+        # Use margin to focus on large errors
+        loss = torch.mean(torch.clamp(diff - margin, min=0.0))
+        total_loss += loss
+        count += 1
+
+    # CM -> NL -> CM cycle
+    if 'cmt' in translations and 'cmt' in inputs:
+        diff = torch.abs(translations['cmt'] - inputs['cmt'])
+        loss = torch.mean(torch.clamp(diff - margin, min=0.0))
+        total_loss += loss
+        count += 1
+
+    return total_loss / count if count > 0 else torch.tensor(0.0)
+
+
+def adaptive_loss_weighting(
+    current_losses: Dict[str, torch.Tensor],
+    target_losses: Dict[str, float],
+) -> Dict[str, float]:
+    """
+    Adaptive loss weighting based on current loss magnitudes.
+
+    Args:
+        current_losses: Current loss values
+        target_losses: Target loss values
+        alpha: Adaptation rate
+
+    Returns:
+        Updated loss weights
+    """
+    weights = {}
+
+    for loss_name in current_losses:
+        if loss_name in target_losses:
+            current_mag = current_losses[loss_name].item()
+            target_mag = target_losses[loss_name]
+
+            # Adjust weight based on relative magnitude
+            ratio = target_mag / (current_mag + 1e-8)
+            weights[loss_name] = max(0.1, min(10.0, ratio))
+
+    return weights
