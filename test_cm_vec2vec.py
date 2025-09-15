@@ -25,7 +25,8 @@ def test_end_to_end():
         nl_cm_cols=nl_cm_cols,
         test_size=args.test_size,
         random_state=args.seed,
-        num_workers=args.num_workers
+        num_workers=args.num_workers,
+        batch_size=args.batch_size
     )
 
     print(f"   Train batches: {len(train_loader)}")
@@ -102,13 +103,13 @@ def test_end_to_end():
 
     # Test validation
     print("\n5. Testing validation...")
-    val_losses = trainer.validate(val_loader, save_table=args.save_table)
+    val_losses = trainer.validate(val_loader, save_table=args.save_table, compute_metrics=True)
     print(f"   Validation losses: {val_losses}")
     print(f"   ✓ Validation successful! with losses: {val_losses}")
 
     # Test evaluation
     print("\n6. Testing evaluation...")
-    results = evaluator.evaluate_loader(test_loader, plot=args.save_plots, save_table=args.save_table)
+    results = evaluator.evaluate_loader(test_loader, plot=True, save_table=True)
     print(f"   Evaluation results: {results}")
     with open(os.path.join(save_dir, f'evaluation_results.json'), 'w') as f:
         results = {k: float(v) for k, v in results.items()}

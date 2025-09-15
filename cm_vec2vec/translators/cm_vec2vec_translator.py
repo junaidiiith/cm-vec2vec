@@ -5,7 +5,7 @@ Main CMVec2Vec translator class for NL2CM translation
 import torch
 import torch.nn as nn
 from typing import Dict, Optional, Tuple
-
+from ..utils import get_device
 from .adapters import Adapter, ConditionalAdapter
 from .discriminators import Discriminator, ConditionalDiscriminator
 from .mlp_with_residual import MLPWithResidual, ConditionalMLPWithResidual
@@ -396,25 +396,27 @@ class CMVec2VecTranslator(nn.Module):
         # Generate cross-domain translations
         # NL -> CM translation
         if 'nlt' in inputs and 'nlt' in latent_reps:
+            # Use the raw latent representation and process it through backbone for translation
             if self.use_conditioning and condition is not None:
-                processed_nlt_latent = self.backbone(
+                trans_nlt_latent = self.backbone(
                     latent_reps['nlt'], condition)
             else:
-                processed_nlt_latent = self.backbone(latent_reps['nlt'])
+                trans_nlt_latent = self.backbone(latent_reps['nlt'])
 
             translations['cmt'] = self._project_from_latent(
-                processed_nlt_latent, is_nlt=False, condition=condition)
+                trans_nlt_latent, is_nlt=False, condition=condition)
 
         # CM -> NL translation
         if 'cmt' in inputs and 'cmt' in latent_reps:
+            # Use the raw latent representation and process it through backbone for translation
             if self.use_conditioning and condition is not None:
-                processed_cmt_latent = self.backbone(
+                trans_cmt_latent = self.backbone(
                     latent_reps['cmt'], condition)
             else:
-                processed_cmt_latent = self.backbone(latent_reps['cmt'])
+                trans_cmt_latent = self.backbone(latent_reps['cmt'])
 
             translations['nlt'] = self._project_from_latent(
-                processed_cmt_latent, is_nlt=True, condition=condition)
+                trans_cmt_latent, is_nlt=True, condition=condition)
 
         return reconstructions, translations, latent_reps
 
@@ -475,7 +477,8 @@ class CMVec2VecTranslator(nn.Module):
                 fake_scores['nlt_output_fake'] = self.nlt_discriminator(
                     translations['nlt'], condition)
             else:
-                fake_scores['nlt_output_fake'] = self.nlt_discriminator(translations['nlt'])
+                fake_scores['nlt_output_fake'] = self.nlt_discriminator(
+                    translations['nlt'])
 
         if 'cmt' in translations:
             if self.use_conditioning and condition is not None:
@@ -513,3 +516,61 @@ class CMVec2VecTranslator(nn.Module):
             return self.latent_discriminator(all_latent, repeated_condition)
         else:
             return self.latent_discriminator(all_latent)
+
+    @classmethod
+    def load_from_checkpoint(cls, checkpoint_path: str, **model_kwargs) -> 'CMVec2VecTranslator':
+        """
+        Load a CMVec2Vec model from a checkpoint.
+
+        Args:
+            checkpoint_path: Path to the checkpoint file
+            **model_kwargs: Additional arguments for model initialization
+
+        Returns:
+            Loaded CMVec2Vec model
+        """
+        checkpoint = torch.load(
+            checkpoint_path, map_location=get_device(), weights_only=False)
+
+        # Extract model parameters from checkpoint if available
+        if 'model_state_dict' in checkpoint:
+            state_dict = checkpoint['model_state_dict']
+        else:
+            state_dict = checkpoint
+
+        # Infer model parameters from the state dict
+        # Extract embedding_dim from adapter input layers
+        embedding_dim = 1536  # default
+        for key, tensor in state_dict.items():
+            if 'adapter.network.0.weight' in key and tensor.dim() == 2:
+                embedding_dim = tensor.shape[1]  # Input dimension
+                break
+
+        # Extract latent_dim from adapter output layers
+        latent_dim = 64  # default
+        for key, tensor in state_dict.items():
+            if 'adapter.network.8.weight' in key:  # Last layer of adapter
+                latent_dim = tensor.shape[0]  # Output dimension
+                break
+
+        # Extract hidden_dim from adapter layers
+        hidden_dim = 256  # default
+        for key, tensor in state_dict.items():
+            if 'adapter.network.0.weight' in key and tensor.dim() == 2:
+                hidden_dim = tensor.shape[0]  # Hidden dimension
+                break
+
+        # Create model with inferred parameters, overriding with provided kwargs
+        model_params = {
+            'embedding_dim': embedding_dim,
+            'latent_dim': latent_dim,
+            'hidden_dim': hidden_dim,
+            **model_kwargs  # Override with provided kwargs
+        }
+
+        model = cls(**model_params)
+
+        # Load the model state dict
+        model.load_state_dict(state_dict)
+
+        return model

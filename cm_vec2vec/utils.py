@@ -13,6 +13,7 @@ from sklearn.metrics import (
     normalized_mutual_info_score
 )
 from scipy.linalg import orthogonal_procrustes
+from scipy.optimize import linear_sum_assignment
 from prettytable import PrettyTable
 from tqdm.auto import tqdm
 
@@ -22,42 +23,145 @@ def get_device():
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def compute_baseline_metrics(source_emb: np.ndarray, target_emb: np.ndarray) -> dict:
-    """Compute baseline metrics for comparison using numpy."""
-    # Ensure inputs are numpy arrays
-    source_emb = np.asarray(source_emb)
-    target_emb = np.asarray(target_emb)
+def compute_baseline_metrics(original_source_emb: np.ndarray, original_target_emb: np.ndarray) -> dict:
+    """
+    Compute baseline metrics for comparison using original embeddings.
 
-    # Identity baseline (no translation)
-    # Compute cosine similarity for each pair
+    Args:
+        original_source_emb: Original source embeddings (e.g., NLT embeddings)
+        original_target_emb: Original target embeddings (e.g., CMT embeddings)
+
+    Returns:
+        Dictionary of baseline metrics
+    """
+    # Ensure inputs are numpy arrays
+    original_source_emb = np.asarray(original_source_emb)
+    original_target_emb = np.asarray(original_target_emb)
+
+    # 1. Identity baseline (F(x) = x) - no translation
+    # This tests how similar the original embeddings are to each other
     identity_cosine = np.mean([
-        compute_cosine_similarity(source_emb[i:i+1], target_emb[i:i+1])
-        for i in range(len(source_emb))
+        compute_cosine_similarity_torch(
+            original_source_emb[i:i+1], original_target_emb[i:i+1])
+        for i in range(len(original_source_emb))
     ])
 
-    # Random baseline
-    n_samples = source_emb.shape[0]
+    # 2. Random baseline - expected rank for random assignment
+    n_samples = original_source_emb.shape[0]
     random_mean_rank = n_samples / 2
 
-    # Linear Procrustes baseline (orthogonal transformation)
-    R, _ = orthogonal_procrustes(target_emb, source_emb)
-    nlt_procrustes = source_emb @ R.T
+    # 3. Procrustes baseline (orthogonal transformation on original embeddings)
+    # This finds the best linear transformation between original embedding spaces
+    R, _ = orthogonal_procrustes(original_target_emb, original_source_emb)
+    procrustes_transformed = original_source_emb @ R.T
     procrustes_cosine = np.mean([
-        compute_cosine_similarity(nlt_procrustes[i:i+1], target_emb[i:i+1])
-        for i in range(source_emb.shape[0])
+        compute_cosine_similarity_torch(
+            procrustes_transformed[i:i+1], original_target_emb[i:i+1])
+        for i in range(original_source_emb.shape[0])
     ])
+
+    # 4. Identity baseline retrieval metrics (F(x) = x)
+    print("Computing identity baseline retrieval metrics...")
+    identity_mrr = compute_mrr_torch(original_source_emb, original_target_emb)
+    identity_top_1 = compute_top_k_accuracy_torch(
+        original_source_emb, original_target_emb, k=1)
+    identity_top_5 = compute_top_k_accuracy_torch(
+        original_source_emb, original_target_emb, k=5)
+    identity_top_10 = compute_top_k_accuracy_torch(
+        original_source_emb, original_target_emb, k=10)
+
+    # 5. Procrustes baseline retrieval metrics
+    print("Computing procrustes baseline retrieval metrics...")
+    procrustes_mrr = compute_mrr_torch(
+        procrustes_transformed, original_target_emb)
+    procrustes_top_1 = compute_top_k_accuracy_torch(
+        procrustes_transformed, original_target_emb, k=1)
+    procrustes_top_5 = compute_top_k_accuracy_torch(
+        procrustes_transformed, original_target_emb, k=5)
+    procrustes_top_10 = compute_top_k_accuracy_torch(
+        procrustes_transformed, original_target_emb, k=10)
+
+    # 6. Oracle-aided optimal transport baseline
+    # print("Computing oracle-aided optimal transport baseline...")
+    # oracle_mrr, oracle_top_1, oracle_top_5, oracle_top_10 = compute_oracle_baseline(
+    #     original_source_emb, original_target_emb)
 
     return {
         'identity_cosine': identity_cosine,
         'random_mean_rank': random_mean_rank,
-        'procrustes_cosine': procrustes_cosine
+        'procrustes_cosine': procrustes_cosine,
+        'identity_mrr': identity_mrr,
+        'identity_top_1_accuracy': identity_top_1,
+        'identity_top_5_accuracy': identity_top_5,
+        'identity_top_10_accuracy': identity_top_10,
+        'procrustes_mrr': procrustes_mrr,
+        'procrustes_top_1_accuracy': procrustes_top_1,
+        'procrustes_top_5_accuracy': procrustes_top_5,
+        'procrustes_top_10_accuracy': procrustes_top_10,
+        # 'oracle_mrr': oracle_mrr,
+        # 'oracle_top_1_accuracy': oracle_top_1,
+        # 'oracle_top_5_accuracy': oracle_top_5,
+        # 'oracle_top_10_accuracy': oracle_top_10
     }
+
+
+def compute_oracle_baseline(source_emb: np.ndarray, target_emb: np.ndarray) -> tuple:
+    """
+    Compute oracle-aided optimal transport baseline.
+
+    This solves the optimal assignment problem: π* = arg min_π Σ cos(u_i, v_π(i))
+    This is the best possible performance when we know all candidate targets.
+
+    Args:
+        source_emb: Source embeddings
+        target_emb: Target embeddings
+
+    Returns:
+        Tuple of (mrr, top_1, top_5, top_10) for oracle baseline
+    """
+    # Normalize embeddings
+    print("Computing cosine similarity matrix...")
+    similarity_matrix = fast_pairwise_cosine_similarity(source_emb, target_emb)
+    print("Cosine similarity matrix computed successfully of shape", similarity_matrix.shape)
+    # Solve optimal assignment problem using Hungarian algorithm
+    # We want to maximize cosine similarity, so negate the matrix
+    print("Solving optimal assignment problem...")
+    row_indices, col_indices = linear_sum_assignment(-similarity_matrix)
+    print("Optimal assignment problem solved successfully!")
+
+    # Create optimal assignment mapping
+    optimal_assignment = np.zeros(len(source_emb), dtype=int)
+    optimal_assignment[row_indices] = col_indices
+
+    # Compute metrics for optimal assignment
+    # For each source, find its rank in the similarity to its assigned target
+    ranks = []
+    for i in tqdm(range(len(source_emb)), desc="Computing ranks"):
+        # Get similarity scores for source i to all targets
+        similarities = similarity_matrix[i]
+        # Find rank of the optimally assigned target
+        assigned_target = optimal_assignment[i]
+        assigned_similarity = similarities[assigned_target]
+        # Count how many targets have higher similarity
+        rank = np.sum(similarities > assigned_similarity) + 1
+        ranks.append(rank)
+    print("Ranks computed successfully!")
+    ranks = np.array(ranks)
+
+    # Compute metrics
+    mrr = np.mean(1.0 / ranks)
+    top_1 = np.mean(ranks == 1)
+    top_5 = np.mean(ranks <= 5)
+    top_10 = np.mean(ranks <= 10)
+    print("Metrics computed successfully!")
+    return mrr, top_1, top_5, top_10
 
 
 def compute_retrieval_metrics(source_emb: np.ndarray, target_emb: np.ndarray) -> dict:
     """Compute comprehensive retrieval metrics."""
+    print("Computing comprehensive retrieval metrics...")
     # Compute similarities
-    cosine_similarity_results = compute_cosine_similarity(
+    cosine_similarity_results = compute_cosine_similarity_torch(
         source_emb, target_emb)
     top_1_accuracy_results = compute_top_k_accuracy_torch(
         source_emb, target_emb, k=1)
@@ -137,6 +241,85 @@ def compute_cosine_similarity(
     return np.mean(cosine_sim)
 
 
+def compute_cosine_loss(
+    source_embeddings: np.ndarray,
+    target_embeddings: np.ndarray
+) -> float:
+    """
+    Compute cosine loss as defined in the paper: (1/n) * Σ [1 - cos(F(u_i), v_i)]
+
+    This is the loss function used for training the translator.
+
+    Args:
+        source_embeddings: Translated source embeddings F(u_i)
+        target_embeddings: Target embeddings v_i
+
+    Returns:
+        Mean cosine loss
+    """
+    # Normalize vectors to unit length
+    source_norm = source_embeddings / \
+        np.linalg.norm(source_embeddings, axis=1, keepdims=True)
+    target_norm = target_embeddings / \
+        np.linalg.norm(target_embeddings, axis=1, keepdims=True)
+
+    # Compute cosine similarity as dot product of normalized vectors
+    cosine_sim = np.sum(source_norm * target_norm, axis=1)
+
+    # Compute cosine loss: 1 - cosine_similarity
+    cosine_loss = 1.0 - cosine_sim
+
+    return np.mean(cosine_loss)
+
+
+def compute_cosine_similarity_torch(
+    source_embeddings: np.ndarray,
+    target_embeddings: np.ndarray,
+    batch_size: int = 2000,
+    device: str = 'cuda'
+) -> float:
+    """
+    GPU-accelerated cosine similarity computation.
+    
+    Args:
+        source_embeddings: Source embeddings
+        target_embeddings: Target embeddings
+        batch_size: Batch size for processing
+        device: Device to use ('cuda' or 'cpu')
+    
+    Returns:
+        Mean cosine similarity
+    """
+    # Convert to PyTorch tensors
+    source_tensor = torch.tensor(source_embeddings, dtype=torch.float32, device=device)
+    target_tensor = torch.tensor(target_embeddings, dtype=torch.float32, device=device)
+    
+    # Normalize vectors to unit length
+    source_norm = F.normalize(source_tensor, p=2, dim=1)
+    target_norm = F.normalize(target_tensor, p=2, dim=1)
+    
+    n_samples = len(source_embeddings)
+    cosine_similarities = []
+    
+    with torch.no_grad():
+        # print("Computing cosine similarities...")
+        for i in range(0, n_samples, batch_size):
+        # for i in tqdm(range(0, n_samples, batch_size), desc="Computing cosine similarities"):
+            end_i = min(i + batch_size, n_samples)
+            
+            # Get batch
+            batch_source = source_norm[i:end_i]
+            batch_target = target_norm[i:end_i]
+            
+            # Compute cosine similarity as dot product of normalized vectors
+            batch_cosine_sim = torch.sum(batch_source * batch_target, dim=1)
+            cosine_similarities.append(batch_cosine_sim.cpu().numpy())
+
+    # Concatenate and compute mean
+    all_cosine_sim = np.concatenate(cosine_similarities)
+    return np.mean(all_cosine_sim)
+
+
 def compute_top_k_accuracy(
     source_embeddings: np.ndarray,
     target_embeddings: np.ndarray,
@@ -191,7 +374,7 @@ def compute_top_k_accuracy_torch(
     correct_count = 0
 
     with torch.no_grad():
-        for i in range(0, n_samples, batch_size):
+        for i in tqdm(range(0, n_samples, batch_size), desc=f"Computing top-k accuracy for k={k}"):
             end_i = min(i + batch_size, n_samples)
 
             # Get batch
@@ -278,6 +461,7 @@ def compute_mrr_torch(
 ) -> float:
     """
     Ultra-fast MRR computation using PyTorch GPU acceleration.
+    Memory-efficient version that avoids sorting large similarity matrices.
     """
     # Convert to PyTorch tensors
     source_tensor = torch.tensor(
@@ -293,7 +477,7 @@ def compute_mrr_torch(
     reciprocal_ranks = []
 
     with torch.no_grad():
-        for i in range(0, n_samples, batch_size):
+        for i in tqdm(range(0, n_samples, batch_size), desc=f"Computing MRR"):
             end_i = min(i + batch_size, n_samples)
 
             # Get batch
@@ -302,15 +486,16 @@ def compute_mrr_torch(
             # Compute similarities
             similarities = torch.mm(batch_source, target_norm.t())
 
-            # Get ranks
-            _, sorted_indices = torch.sort(
-                similarities, dim=1, descending=True)
+            # Memory-efficient rank computation
+            # For each query, find how many targets have higher similarity than the correct answer
+            correct_indices = torch.arange(i, end_i, device=device)
+            correct_similarities = similarities[torch.arange(
+                end_i - i), correct_indices]
 
-            # Find ranks of correct answers
-            correct_indices = torch.arange(
-                i, end_i, device=device).unsqueeze(1)
-            ranks = torch.argmax(
-                (sorted_indices == correct_indices).float(), dim=1) + 1
+            # Count how many targets have higher similarity than correct answer
+            # This gives us the rank directly without sorting
+            ranks = (similarities > correct_similarities.unsqueeze(1)).sum(
+                dim=1) + 1
 
             # Compute reciprocal ranks
             batch_reciprocal_ranks = 1.0 / ranks.float()

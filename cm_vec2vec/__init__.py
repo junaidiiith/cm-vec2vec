@@ -11,7 +11,7 @@ from .training import CMVec2VecTrainer
 from .evaluation import CMVec2VecEvaluator
 from .data_loader import load_nl2cm_data
 from .config import load_config, save_config
-from .losses import (
+from .losses_cosine_distance import (
     adversarial_loss,
     reconstruction_loss,
     cycle_consistency_loss,
@@ -35,5 +35,3 @@ __all__ = [
     "vector_space_preservation_loss",
     "compute_all_losses",
 ]
-
-
