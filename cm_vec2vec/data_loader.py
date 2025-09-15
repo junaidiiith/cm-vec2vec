@@ -17,30 +17,35 @@ import os
 from cm_vec2vec.embed import get_embeddings
 
 
-class NL2CMDataset(Dataset):
+class PairedNL2CMDataset(Dataset):
     """
-    Dataset for NL2CM translation task.
+    Dataset for paired NL-CM data for training and evaluation.
 
-    This dataset provides unpaired NL and CM embeddings for training the vec2vec translator.
-    The embeddings are from the same encoder but represent different domains (natural language
-    vs conceptual modeling language).
+    This dataset provides paired NL and CM embeddings that correspond to the same semantic content.
+    This is essential for training a translation model that maintains semantic correspondence.
     """
 
     def __init__(self, nlt_embeddings: np.ndarray, cmt_embeddings: np.ndarray,
-                 normalize: bool = True, noise_level: float = 0.0):
+                 normalize: bool = False, noise_level: float = 0.0, 
+                 use_paired: bool = True):
         """
-        Initialize the dataset.
+        Initialize the paired dataset.
 
         Args:
             nlt_embeddings: Array of NL embeddings (N, d)
-            cmt_embeddings: Array of CM embeddings (M, d) 
+            cmt_embeddings: Array of CM embeddings (N, d) - same length as NL
             normalize: Whether to normalize embeddings
             noise_level: Level of noise to add during training
+            use_paired: Whether to use paired data (True) or unpaired (False)
         """
+        assert len(nlt_embeddings) == len(
+            cmt_embeddings), "Paired data must have same length"
+
         self.nlt_embeddings = nlt_embeddings
         self.cmt_embeddings = cmt_embeddings
         self.normalize = normalize
         self.noise_level = noise_level
+        self.use_paired = use_paired
         self.training = True  # Default to training mode
 
         if normalize:
@@ -55,16 +60,20 @@ class NL2CMDataset(Dataset):
         return embeddings / (norms + 1e-8)
 
     def __len__(self) -> int:
-        return max(len(self.nlt_embeddings), len(self.cmt_embeddings))
+        return len(self.nlt_embeddings)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """Get a sample from the dataset."""
-        # Randomly sample from each domain to ensure unpaired data
-        nlt_idx = random.randint(0, len(self.nlt_embeddings) - 1)
-        cmt_idx = random.randint(0, len(self.cmt_embeddings) - 1)
-
-        nlt_emb = self.nlt_embeddings[nlt_idx]
-        cmt_emb = self.cmt_embeddings[cmt_idx]
+        if self.use_paired:
+            # Use paired data - same index for both domains
+            nlt_emb = self.nlt_embeddings[idx]
+            cmt_emb = self.cmt_embeddings[idx]
+        else:
+            # Use unpaired data - random sampling (for comparison)
+            nlt_idx = random.randint(0, len(self.nlt_embeddings) - 1)
+            cmt_idx = random.randint(0, len(self.cmt_embeddings) - 1)
+            nlt_emb = self.nlt_embeddings[nlt_idx]
+            cmt_emb = self.cmt_embeddings[cmt_idx]
 
         # Add noise during training
         if self.training and self.noise_level > 0:
@@ -84,56 +93,24 @@ class NL2CMDataset(Dataset):
         }
 
 
-class PairedNL2CMDataset(Dataset):
+# Keep the old unpaired dataset for backward compatibility
+class NL2CMDataset(PairedNL2CMDataset):
     """
-    Dataset for paired NL-CM data (used for evaluation only).
-
-    This dataset provides paired NL and CM embeddings for evaluation purposes.
+    Dataset for NL2CM translation task with unpaired data.
+    
+    This is kept for backward compatibility but should not be used for training
+    as it doesn't maintain semantic correspondence.
     """
-
+    
     def __init__(self, nlt_embeddings: np.ndarray, cmt_embeddings: np.ndarray,
-                 normalize: bool = True):
-        """
-        Initialize the paired dataset.
-
-        Args:
-            nlt_embeddings: Array of NL embeddings (N, d)
-            cmt_embeddings: Array of CM embeddings (N, d) - same length as NL
-            normalize: Whether to normalize embeddings
-        """
-        assert len(nlt_embeddings) == len(
-            cmt_embeddings), "Paired data must have same length"
-
-        self.nlt_embeddings = nlt_embeddings
-        self.cmt_embeddings = cmt_embeddings
-        self.normalize = normalize
-
-        if normalize:
-            self.nlt_embeddings = self._normalize_embeddings(
-                self.nlt_embeddings)
-            self.cmt_embeddings = self._normalize_embeddings(
-                self.cmt_embeddings)
-
-    def _normalize_embeddings(self, embeddings: np.ndarray) -> np.ndarray:
-        """Normalize embeddings to unit length."""
-        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-        return embeddings / (norms + 1e-8)
-
-    def __len__(self) -> int:
-        return len(self.nlt_embeddings)
-
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        """Get a paired sample from the dataset."""
-        return {
-            'nlt': torch.FloatTensor(self.nlt_embeddings[idx]),
-            'cmt': torch.FloatTensor(self.cmt_embeddings[idx])
-        }
+                 normalize: bool = False, noise_level: float = 0.0):
+        super().__init__(nlt_embeddings, cmt_embeddings, normalize, noise_level, use_paired=False)
 
 
 def load_nl2cm_data(
     data_path: str, nl_cm_cols: list[str], test_size: float = 0.2, 
     batch_size: int = 128, num_workers: int = 4, limit: int = None,
-    random_state: int = 42) -> Tuple[DataLoader, DataLoader, DataLoader]:
+    random_state: int = 42, use_paired_training: bool = True) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
     Load NL2CM data and create train/validation/test splits.
 
@@ -141,6 +118,7 @@ def load_nl2cm_data(
         data_path: Path to the pickle file containing the dataframe
         test_size: Fraction of data to use for testing
         random_state: Random state for reproducibility
+        use_paired_training: Whether to use paired data for training (recommended)
 
     Returns:
         Tuple of (train_loader, val_loader, test_loader)
@@ -150,8 +128,16 @@ def load_nl2cm_data(
     print(
         f"Loaded {len(nlt_embeddings)} NL embeddings and {len(cmt_embeddings)} CM embeddings")
     print(f"Embedding dimension: {nlt_embeddings.shape[1]}")
+    
+    # Ensure we have the same number of NL and CM embeddings for paired training
+    min_len = min(len(nlt_embeddings), len(cmt_embeddings))
+    if len(nlt_embeddings) != len(cmt_embeddings):
+        print(f"Warning: Different number of NL ({len(nlt_embeddings)}) and CM ({len(cmt_embeddings)}) embeddings.")
+        print(f"Using {min_len} samples for paired training.")
+        nlt_embeddings = nlt_embeddings[:min_len]
+        cmt_embeddings = cmt_embeddings[:min_len]
 
-    # Create unpaired datasets for training
+    # Create paired datasets for training
     train_nlt, test_nlt = train_test_split(nlt_embeddings, test_size=test_size,
                                            random_state=random_state)
     train_cmt, test_cmt = train_test_split(cmt_embeddings, test_size=test_size,
@@ -163,10 +149,10 @@ def load_nl2cm_data(
     train_cmt, val_cmt = train_test_split(train_cmt, test_size=0.2,
                                           random_state=random_state)
 
-    # Create datasets
-    train_dataset = NL2CMDataset(train_nlt, train_cmt, normalize=True)
-    val_dataset = NL2CMDataset(val_nlt, val_cmt, normalize=True)
-    test_dataset = PairedNL2CMDataset(test_nlt, test_cmt, normalize=True)
+    # Create datasets - use paired data for training
+    train_dataset = PairedNL2CMDataset(train_nlt, train_cmt, normalize=False, use_paired=use_paired_training)
+    val_dataset = PairedNL2CMDataset(val_nlt, val_cmt, normalize=False, use_paired=True)  # Always paired for validation
+    test_dataset = PairedNL2CMDataset(test_nlt, test_cmt, normalize=False, use_paired=True)  # Always paired for evaluation
 
     # Create data loaders
     train_loader = DataLoader(

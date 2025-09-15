@@ -475,8 +475,7 @@ class CMVec2VecTranslator(nn.Module):
                 fake_scores['nlt_output_fake'] = self.nlt_discriminator(
                     translations['nlt'], condition)
             else:
-                fake_scores['nlt_output_fake'] = self.nlt_discriminator(
-                    translations['nlt'])
+                fake_scores['nlt_output_fake'] = self.nlt_discriminator(translations['nlt'])
 
         if 'cmt' in translations:
             if self.use_conditioning and condition is not None:

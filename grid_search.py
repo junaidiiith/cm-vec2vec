@@ -79,20 +79,19 @@ class GridSearch:
         print(f"Parameters: {params}")
         print(f"{'='*60}")
         
-        data_path = os.path.join(params['data_path'], params['dataset'])
-        nl_cm_cols = [params['nl_col'], params['cm_col']]
-        
-        train_loader, val_loader, test_loader = load_nl2cm_data(
-            data_path=data_path,
-            nl_cm_cols=nl_cm_cols,
-            test_size=params['test_size'],
-            random_state=params['seed'],
-            num_workers=params['num_workers']
-        )
-
         try:
             # Update args with current parameters
             args = self._update_args(params)
+            data_path = os.path.join(args.data_path, args.dataset)
+            nl_cm_cols = [args.nl_col, args.cm_col]
+            
+            train_loader, val_loader, test_loader = load_nl2cm_data(
+                data_path=data_path,
+                nl_cm_cols=nl_cm_cols,
+                test_size=args.test_size,
+                random_state=args.seed,
+                num_workers=args.num_workers
+            )
 
             # Create model
             model = CMVec2VecTranslator(
@@ -405,18 +404,23 @@ def create_search_space() -> Dict[str, List]:
         Dictionary defining search space for each parameter
     """
     return {
+        # Dataset parameters
+        'dataset': ['archimate'],
+        
         # Architecture parameters
-        'latent_dim': [128, 512],
-        'hidden_dim': [256, 512],
+        'latent_dim': [64, 128],
+        'hidden_dim': [128, 256],
         'adapter_depth': [2, 3],
         'backbone_depth': [3, 4],
 
         # Loss weights
-        'reconstruction_weight': [10.0, 15.0, 20.0],
-        'cycle_consistency_weight': [10.0, 15.0, 20.0],
-        'vsp_weight': [2.0, 3.0, 10.0],
-        'adversarial_weight': [1.0, 2.0, 10.0],
-        'latent_adversarial_weight': [1.0, 2.0, 10.0],
+        'reconstruction_weight': [2.0, 15.0, 20.0],
+        'cycle_consistency_weight': [2.0, 15.0, 20.0],
+        'vsp_weight': [2.0, 10.0],
+        'adversarial_weight': [1.0, 10.0],
+        'latent_adversarial_weight': [1.0, 10.0],
+        
+        "enhanced_losses": [True, False],
     }
 
 

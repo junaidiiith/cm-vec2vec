@@ -80,13 +80,13 @@ def parse_args():
     model_group.add_argument(
         '--latent_dim',
         type=int,
-        default=256,
+        default=64,
         help='Dimension of shared latent space'
     )
     model_group.add_argument(
         '--hidden_dim',
         type=int,
-        default=512,
+        default=256,
         help='Hidden layer dimension for adapters and backbone'
     )
     model_group.add_argument(
@@ -191,32 +191,50 @@ def parse_args():
     loss_group.add_argument(
         '--reconstruction_weight',
         type=float,
-        default=15.0,
+        default=10.0,
         help='Weight for reconstruction loss'
     )
     loss_group.add_argument(
         '--cycle_consistency_weight',
         type=float,
-        default=15.0,
+        default=10.0,
         help='Weight for cycle consistency loss'
     )
     loss_group.add_argument(
         '--vsp_weight',
         type=float,
-        default=2.0,
+        default=5.0,
         help='Weight for vector space preservation loss'
     )
     loss_group.add_argument(
         '--adversarial_weight',
         type=float,
-        default=1.0,
+        default=2.0,
         help='Weight for adversarial loss'
     )
     loss_group.add_argument(
         '--latent_adversarial_weight',
         type=float,
-        default=1.0,
+        default=2.0,
         help='Weight for latent adversarial loss'
+    )
+    loss_group.add_argument(
+        '--correspondence_weight',
+        type=float,
+        default=20.0,
+        help='Weight for correspondence loss'
+    )
+    loss_group.add_argument(
+        '--cosine_correspondence_weight',
+        type=float,
+        default=5.0,
+        help='Weight for cosine correspondence loss'
+    )
+    loss_group.add_argument(
+        '--ranking_weight',
+        type=float,
+        default=15.0,
+        help='Weight for ranking loss'
     )
     
     loss_group.add_argument(
@@ -224,6 +242,32 @@ def parse_args():
         action='store_true',
         help='Use enhanced loss functions'
     )
+    
+    loss_group.add_argument(
+        '--vsp_temperature',
+        type=float,
+        default=1.0,
+        help='Temperature for vector space preservation loss'
+    )
+    loss_group.add_argument(
+        '--focal_alpha',
+        type=float,
+        default=1.0,
+        help='Alpha for focal adversarial loss'
+    )
+    loss_group.add_argument(
+        '--focal_gamma',
+        type=float,
+        default=2.0,
+        help='Gamma for focal adversarial loss'
+    )
+    loss_group.add_argument(
+        '--cycle_margin',
+        type=float,
+        default=0.1,
+        help='Margin for cycle consistency loss'
+    )
+    
 
     # =============================================================================
     # CHECKPOINTING AND SAVING ARGUMENTS

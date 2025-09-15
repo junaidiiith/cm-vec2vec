@@ -43,16 +43,19 @@ def test_end_to_end():
 
     # Test model creation
     print("\n2. Testing model creation...")
-    model = CMVec2VecTranslator(
-        embedding_dim=args.embedding_dim,
-        latent_dim=args.latent_dim,
-        hidden_dim=args.hidden_dim,
-        adapter_depth=args.adapter_depth,
-        backbone_depth=args.backbone_depth
-    )
+    model_kwargs = {
+        'embedding_dim': args.embedding_dim,
+        'latent_dim': args.latent_dim,
+        'hidden_dim': args.hidden_dim,
+        'adapter_depth': args.adapter_depth,
+        'backbone_depth': args.backbone_depth
+    }
+    model = CMVec2VecTranslator(**model_kwargs)
 
     print(
-        f"   Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+        f"   Model parameters: {sum(p.numel() for p in model.parameters()):,}",
+        f"   Model kwargs: {model_kwargs}"
+    )
     print("   ✓ Model creation successful!")
 
     # Test trainer creation
@@ -60,6 +63,13 @@ def test_end_to_end():
     save_dir = os.path.join(args.save_dir, args.dataset)
     os.makedirs(save_dir, exist_ok=True)
     evaluator = CMVec2VecEvaluator(model=model, save_dir=save_dir)
+    enhanced_losses_kwargs = {
+        'vsp_temperature': args.vsp_temperature,
+        'focal_alpha': args.focal_alpha,
+        'focal_gamma': args.focal_gamma,
+        'cycle_margin': args.cycle_margin,
+        'enhanced': args.enhanced_losses
+    }
     trainer = CMVec2VecTrainer(
         model=model,
         lr_generator=args.lr_generator,
@@ -69,77 +79,39 @@ def test_end_to_end():
             'cycle_consistency': args.cycle_consistency_weight,
             'vsp': args.vsp_weight,
             'adversarial': args.adversarial_weight,
-            'latent_adversarial': args.latent_adversarial_weight
+            'latent_adversarial': args.latent_adversarial_weight,
+            'correspondence': args.correspondence_weight,
+            'cosine_correspondence': args.cosine_correspondence_weight,
+            'ranking': args.ranking_weight
         },
         save_dir=save_dir,
-        evaluator=evaluator
+        evaluator=evaluator,
+        **enhanced_losses_kwargs
     )
     print("   ✓ Trainer and evaluator creation successful!")
-    print("Loss Weights:")
-    print(f"   Reconstruction: {args.reconstruction_weight}")
-    print(f"   Cycle Consistency: {args.cycle_consistency_weight}")
-    print(f"   VSP: {args.vsp_weight}")
-    print(f"   Adversarial: {args.adversarial_weight}")
-    print(f"   Latent Adversarial: {args.latent_adversarial_weight}")
-    print(f"   Enhanced Losses: {args.enhanced_losses}")
-    print(f"   Save Table: {args.save_table}")
-    print(f"   Save Plots: {args.save_plots}")
-    print(f"   Save Dir: {save_dir}")
-    print(f"   Dataset: {args.dataset}")
-    print(f"   Data Path: {data_path}")
-    print(f"   NL Col: {args.nl_col}")
-    print(f"   CM Col: {args.cm_col}")
-    print(f"   Test Size: {args.test_size}")
-    print(f"   Seed: {args.seed}")
-    print(f"   Num Workers: {args.num_workers}")
-    print(f"   Epochs: {args.epochs}")
-    print(f"   Save Every: {args.save_every}")
-    print(f"   Early Stopping Patience: {args.early_stopping_patience}")
-    print(f"   LR Generator: {args.lr_generator}")
-    print(f"   LR Discriminator: {args.lr_discriminator}")
-    print(f"   Embedding Dim: {args.embedding_dim}")
-    print(f"   Latent Dim: {args.latent_dim}")
-    print(f"   Hidden Dim: {args.hidden_dim}")
-    print(f"   Adapter Depth: {args.adapter_depth}")
-    print(f"   Backbone Depth: {args.backbone_depth}")
-    print(f"   Save Dir: {save_dir}")
-    print(f"   Dataset: {args.dataset}")
-    print(f"   Data Path: {data_path}")
-    print(f"   NL Col: {args.nl_col}")
-    print(f"   CM Col: {args.cm_col}")
-    print(f"   Test Size: {args.test_size}")
-    print(f"   Seed: {args.seed}")
-    print(f"   Num Workers: {args.num_workers}")
-    print(f"   Epochs: {args.epochs}")
-    print(f"   Save Every: {args.save_every}")
-    print(f"   Early Stopping Patience: {args.early_stopping_patience}")
-    print(f"   LR Generator: {args.lr_generator}")
-    print(f"   LR Discriminator: {args.lr_discriminator}")
-
     # Test training step
     print("\n4. Testing training step...")
-    train_fn = trainer.enhanced_train if args.enhanced_losses else trainer.train
-    train_fn(
+    trainer.train(
         train_loader, val_loader, epochs=args.epochs,
         save_every=args.save_every,
-        early_stopping_patience=args.early_stopping_patience
+        early_stopping_patience=args.early_stopping_patience,
+        save_table=args.save_table
     )
 
     print("   ✓ Training successful!")
 
     # Test validation
     print("\n5. Testing validation...")
-    val_fn = trainer.enhanced_validate if args.enhanced_losses else trainer.validate
-    val_losses = val_fn(val_loader, save_table=args.save_table)
+    val_losses = trainer.validate(val_loader, save_table=args.save_table)
     print(f"   Validation losses: {val_losses}")
     print(f"   ✓ Validation successful! with losses: {val_losses}")
 
     # Test evaluation
     print("\n6. Testing evaluation...")
-
     results = evaluator.evaluate_loader(test_loader, plot=args.save_plots, save_table=args.save_table)
     print(f"   Evaluation results: {results}")
     with open(os.path.join(save_dir, f'evaluation_results.json'), 'w') as f:
+        results = {k: float(v) for k, v in results.items()}
         json.dump(results, f)
 
     print("   Evaluation table created successfully")

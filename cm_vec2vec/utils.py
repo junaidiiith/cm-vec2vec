@@ -14,6 +14,7 @@ from sklearn.metrics import (
 )
 from scipy.linalg import orthogonal_procrustes
 from prettytable import PrettyTable
+from tqdm.auto import tqdm
 
 
 def get_device():
@@ -21,26 +22,23 @@ def get_device():
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-import numpy as np
-from scipy.linalg import orthogonal_procrustes
-
 def compute_baseline_metrics(source_emb: np.ndarray, target_emb: np.ndarray) -> dict:
     """Compute baseline metrics for comparison using numpy."""
     # Ensure inputs are numpy arrays
     source_emb = np.asarray(source_emb)
     target_emb = np.asarray(target_emb)
-    
+
     # Identity baseline (no translation)
     # Compute cosine similarity for each pair
     identity_cosine = np.mean([
         compute_cosine_similarity(source_emb[i:i+1], target_emb[i:i+1])
         for i in range(len(source_emb))
     ])
-    
+
     # Random baseline
     n_samples = source_emb.shape[0]
     random_mean_rank = n_samples / 2
-    
+
     # Linear Procrustes baseline (orthogonal transformation)
     R, _ = orthogonal_procrustes(target_emb, source_emb)
     nlt_procrustes = source_emb @ R.T
@@ -48,25 +46,26 @@ def compute_baseline_metrics(source_emb: np.ndarray, target_emb: np.ndarray) -> 
         compute_cosine_similarity(nlt_procrustes[i:i+1], target_emb[i:i+1])
         for i in range(source_emb.shape[0])
     ])
-    
+
     return {
         'identity_cosine': identity_cosine,
         'random_mean_rank': random_mean_rank,
         'procrustes_cosine': procrustes_cosine
     }
 
+
 def compute_retrieval_metrics(source_emb: np.ndarray, target_emb: np.ndarray) -> dict:
     """Compute comprehensive retrieval metrics."""
     # Compute similarities
     cosine_similarity_results = compute_cosine_similarity(
         source_emb, target_emb)
-    top_1_accuracy_results = compute_top_k_accuracy(
+    top_1_accuracy_results = compute_top_k_accuracy_torch(
         source_emb, target_emb, k=1)
-    top_5_accuracy_results = compute_top_k_accuracy(
+    top_5_accuracy_results = compute_top_k_accuracy_torch(
         source_emb, target_emb, k=5)
-    top_10_accuracy_results = compute_top_k_accuracy(
+    top_10_accuracy_results = compute_top_k_accuracy_torch(
         source_emb, target_emb, k=10)
-    mrr_results = compute_mrr(source_emb, target_emb)
+    mrr_results = compute_mrr_torch(source_emb, target_emb)
 
     return {
         'cosine_similarity_results': cosine_similarity_results,
@@ -125,14 +124,16 @@ def compute_cosine_similarity(
     Returns:
         Mean cosine similarity
     """
-    
+
     # Normalize vectors to unit length
-    source_norm = source_embeddings / np.linalg.norm(source_embeddings, axis=1, keepdims=True)
-    target_norm = target_embeddings / np.linalg.norm(target_embeddings, axis=1, keepdims=True)
-    
+    source_norm = source_embeddings / \
+        np.linalg.norm(source_embeddings, axis=1, keepdims=True)
+    target_norm = target_embeddings / \
+        np.linalg.norm(target_embeddings, axis=1, keepdims=True)
+
     # Compute cosine similarity as dot product of normalized vectors
     cosine_sim = np.sum(source_norm * target_norm, axis=1)
-    
+
     return np.mean(cosine_sim)
 
 
@@ -146,22 +147,70 @@ def compute_top_k_accuracy(
     """
     source_embeddings = np.asarray(source_embeddings)
     target_embeddings = np.asarray(target_embeddings)
-    
+
     # Normalize embeddings
-    source_norm = source_embeddings / np.linalg.norm(source_embeddings, axis=1, keepdims=True)
-    target_norm = target_embeddings / np.linalg.norm(target_embeddings, axis=1, keepdims=True)
-    
+    source_norm = source_embeddings / \
+        np.linalg.norm(source_embeddings, axis=1, keepdims=True)
+    target_norm = target_embeddings / \
+        np.linalg.norm(target_embeddings, axis=1, keepdims=True)
+
     # Compute similarity matrix
     similarity_matrix = np.dot(source_norm, target_norm.T)
-    
+
     # Get top-k indices
     top_k_indices = np.argpartition(similarity_matrix, -k, axis=1)[:, -k:]
-    
+
     # Check if diagonal elements (correct answers) are in top-k
     diagonal_indices = np.arange(len(source_embeddings))[:, np.newaxis]
     correct = np.any(top_k_indices == diagonal_indices, axis=1)
-    
+
     return np.mean(correct)
+
+
+def compute_top_k_accuracy_torch(
+    source_embeddings: np.ndarray,
+    target_embeddings: np.ndarray,
+    k: int = 1,
+    batch_size: int = 2000,
+    device: str = 'cuda'
+) -> float:
+    """
+    Ultra-fast Top-K accuracy using PyTorch GPU acceleration.
+    """
+    # Convert to PyTorch tensors
+    source_tensor = torch.tensor(
+        source_embeddings, dtype=torch.float32, device=device)
+    target_tensor = torch.tensor(
+        target_embeddings, dtype=torch.float32, device=device)
+
+    # Normalize embeddings
+    source_norm = F.normalize(source_tensor, p=2, dim=1)
+    target_norm = F.normalize(target_tensor, p=2, dim=1)
+
+    n_samples = len(source_embeddings)
+    correct_count = 0
+
+    with torch.no_grad():
+        for i in range(0, n_samples, batch_size):
+            end_i = min(i + batch_size, n_samples)
+
+            # Get batch
+            batch_source = source_norm[i:end_i]
+
+            # Compute similarities
+            similarities = torch.mm(batch_source, target_norm.t())
+
+            # Get top-k indices
+            _, top_k_indices = torch.topk(similarities, k, dim=1)
+
+            # Check correctness
+            correct_indices = torch.arange(
+                i, end_i, device=device).unsqueeze(1)
+            batch_correct = torch.any(top_k_indices == correct_indices, dim=1)
+
+            correct_count += batch_correct.sum().item()
+
+    return correct_count / n_samples
 
 
 def compute_mean_rank(
@@ -173,19 +222,23 @@ def compute_mean_rank(
     """
     source_embeddings = np.asarray(source_embeddings)
     target_embeddings = np.asarray(target_embeddings)
-    
+
     # Normalize embeddings
-    source_norm = source_embeddings / np.linalg.norm(source_embeddings, axis=1, keepdims=True)
-    target_norm = target_embeddings / np.linalg.norm(target_embeddings, axis=1, keepdims=True)
-    
+    source_norm = source_embeddings / \
+        np.linalg.norm(source_embeddings, axis=1, keepdims=True)
+    target_norm = target_embeddings / \
+        np.linalg.norm(target_embeddings, axis=1, keepdims=True)
+
     # Compute similarity matrix
     similarity_matrix = np.dot(source_norm, target_norm.T)
-    
+
     # Get ranks for all queries at once
     sorted_indices = np.argsort(similarity_matrix, axis=1)[:, ::-1]
-    ranks = np.argmax(sorted_indices == np.arange(len(source_embeddings))[:, np.newaxis], axis=1) + 1
-    
+    ranks = np.argmax(sorted_indices == np.arange(
+        len(source_embeddings))[:, np.newaxis], axis=1) + 1
+
     return np.mean(ranks)
+
 
 def compute_mrr(
     source_embeddings: np.ndarray,
@@ -196,21 +249,73 @@ def compute_mrr(
     """
     source_embeddings = np.asarray(source_embeddings)
     target_embeddings = np.asarray(target_embeddings)
-    
+
     # Normalize embeddings
-    source_norm = source_embeddings / np.linalg.norm(source_embeddings, axis=1, keepdims=True)
-    target_norm = target_embeddings / np.linalg.norm(target_embeddings, axis=1, keepdims=True)
-    
+    source_norm = source_embeddings / \
+        np.linalg.norm(source_embeddings, axis=1, keepdims=True)
+    target_norm = target_embeddings / \
+        np.linalg.norm(target_embeddings, axis=1, keepdims=True)
+
     # Compute similarity matrix
     similarity_matrix = np.dot(source_norm, target_norm.T)
-    
+
     # Get ranks for all queries at once
     sorted_indices = np.argsort(similarity_matrix, axis=1)[:, ::-1]
-    ranks = np.argmax(sorted_indices == np.arange(len(source_embeddings))[:, np.newaxis], axis=1) + 1
-    
+    ranks = np.argmax(sorted_indices == np.arange(
+        len(source_embeddings))[:, np.newaxis], axis=1) + 1
+
     # Compute reciprocal ranks
     reciprocal_ranks = 1.0 / ranks
-    
+
+    return np.mean(reciprocal_ranks)
+
+
+def compute_mrr_torch(
+    source_embeddings: np.ndarray,
+    target_embeddings: np.ndarray,
+    batch_size: int = 2000,
+    device: str = 'cuda'
+) -> float:
+    """
+    Ultra-fast MRR computation using PyTorch GPU acceleration.
+    """
+    # Convert to PyTorch tensors
+    source_tensor = torch.tensor(
+        source_embeddings, dtype=torch.float32, device=device)
+    target_tensor = torch.tensor(
+        target_embeddings, dtype=torch.float32, device=device)
+
+    # Normalize embeddings
+    source_norm = F.normalize(source_tensor, p=2, dim=1)
+    target_norm = F.normalize(target_tensor, p=2, dim=1)
+
+    n_samples = len(source_embeddings)
+    reciprocal_ranks = []
+
+    with torch.no_grad():
+        for i in range(0, n_samples, batch_size):
+            end_i = min(i + batch_size, n_samples)
+
+            # Get batch
+            batch_source = source_norm[i:end_i]
+
+            # Compute similarities
+            similarities = torch.mm(batch_source, target_norm.t())
+
+            # Get ranks
+            _, sorted_indices = torch.sort(
+                similarities, dim=1, descending=True)
+
+            # Find ranks of correct answers
+            correct_indices = torch.arange(
+                i, end_i, device=device).unsqueeze(1)
+            ranks = torch.argmax(
+                (sorted_indices == correct_indices).float(), dim=1) + 1
+
+            # Compute reciprocal ranks
+            batch_reciprocal_ranks = 1.0 / ranks.float()
+            reciprocal_ranks.extend(batch_reciprocal_ranks.cpu().numpy())
+
     return np.mean(reciprocal_ranks)
 
 
@@ -343,10 +448,10 @@ def plot_embeddings(
     # Ensure inputs are numpy arrays
     nlt_embeddings = np.asarray(nlt_embeddings)
     cmt_embeddings = np.asarray(cmt_embeddings)
-    
+
     if methods is None:
         methods = ['tsne', 'pca', 'umap']
-    
+
     # Prepare data
     all_embeddings = []
     all_labels = []
@@ -381,10 +486,10 @@ def plot_embeddings(
         'pca': PCA(n_components=2, random_state=42),
         'umap': UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
     }
-    
+
     # Create save directory if it doesn't exist
     os.makedirs(save_path, exist_ok=True)
-    
+
     # Create subplots if multiple methods
     if len(methods) > 1:
         fig, axes = plt.subplots(1, len(methods), figsize=figsize)
@@ -393,15 +498,15 @@ def plot_embeddings(
     else:
         fig, ax = plt.subplots(1, 1, figsize=figsize)
         axes = [ax]
-    
+
     for idx, method in enumerate(methods):
         if method not in reducers:
             print(f"Warning: Method {method} not supported. Skipping.")
             continue
-            
+
         reducer = reducers[method]
         ax = axes[idx] if len(methods) > 1 else axes[0]
-        
+
         # Dimensionality reduction
         print(f"Dimensionality reduction with {method}")
         reduced_embeddings = reducer.fit_transform(all_embeddings)
@@ -411,14 +516,14 @@ def plot_embeddings(
         unique_labels = list(set(all_labels))
         colors = plt.cm.Set1(np.linspace(0, 1, len(unique_labels)))
         markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h']
-        
+
         # Plot by type with proper color and marker mapping
         for i, label in enumerate(unique_labels):
             mask = np.array(all_labels) == label
             ax.scatter(
-                reduced_embeddings[mask, 0], 
-                reduced_embeddings[mask, 1], 
-                c=[colors[i]], 
+                reduced_embeddings[mask, 0],
+                reduced_embeddings[mask, 1],
+                c=[colors[i]],
                 label=label,
                 alpha=0.7,
                 s=50,
@@ -426,19 +531,115 @@ def plot_embeddings(
                 edgecolors='black',
                 linewidth=0.5
             )
-        
-        ax.set_title(f"Embeddings Visualization ({method.upper()})", fontsize=14, fontweight='bold')
+
+        ax.set_title(
+            f"Embeddings Visualization ({method.upper()})", fontsize=14, fontweight='bold')
         ax.set_xlabel(f"{method.upper()} 1", fontsize=12)
         ax.set_ylabel(f"{method.upper()} 2", fontsize=12)
         ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         ax.grid(True, alpha=0.3)
-    
+
     plt.tight_layout()
-    
+
     # Save plot
     if len(methods) > 1:
-        plt.savefig(os.path.join(save_path, "embeddings_comparison.png"), dpi=300, bbox_inches='tight')
+        plt.savefig(os.path.join(save_path, "embeddings_comparison.png"),
+                    dpi=300, bbox_inches='tight')
     else:
-        plt.savefig(os.path.join(save_path, f"{methods[0]}.png"), dpi=300, bbox_inches='tight')
-    
+        plt.savefig(os.path.join(
+            save_path, f"{methods[0]}.png"), dpi=300, bbox_inches='tight')
+
     plt.show()
+
+
+def fast_pairwise_cosine_similarity(embeddings1, embeddings2, chunk_size=1000):
+    """
+    Compute pairwise cosine similarity matrix efficiently.
+
+    Args:
+        embeddings1: (N, D) array
+        embeddings2: (M, D) array
+        chunk_size: Size of chunks for memory efficiency
+
+    Returns:
+        (N, M) similarity matrix
+    """
+    # Normalize embeddings
+    emb1_norm = embeddings1 / \
+        np.linalg.norm(embeddings1, axis=1, keepdims=True)
+    emb2_norm = embeddings2 / \
+        np.linalg.norm(embeddings2, axis=1, keepdims=True)
+
+    # Compute similarity matrix in chunks
+    similarities = []
+    # for i in tqdm(range(0, len(emb1_norm), chunk_size), desc="Computing pairwise cosine similarity"):
+    for i in range(0, len(emb1_norm), chunk_size):
+        end_i = min(i + chunk_size, len(emb1_norm))
+        chunk_sim = np.dot(emb1_norm[i:end_i], emb2_norm.T)
+        similarities.append(chunk_sim)
+
+    return np.vstack(similarities)
+
+
+def compute_geometric_preservation_score(source_embeddings, target_embeddings, batch_size=1000):
+    """
+    Compute a normalized geometric preservation score (0-1, higher is better).
+
+    This measures the correlation between original and translated pairwise similarities.
+    """
+    n_samples = len(source_embeddings)
+    all_orig_sims = []
+    all_trans_sims = []
+
+    # Process in batches
+    # for i in tqdm(range(0, n_samples, batch_size), desc="Computing geometric preservation score"):
+    for i in range(0, n_samples, batch_size):
+        end_i = min(i + batch_size, n_samples)
+        # Normalize embeddings
+        batch_orig_norm = source_embeddings[i:end_i] / np.linalg.norm(
+            source_embeddings[i:end_i], axis=1, keepdims=True)
+        batch_trans_norm = target_embeddings[i:end_i] / np.linalg.norm(
+            target_embeddings[i:end_i], axis=1, keepdims=True)
+
+        # Compute cosine similarities
+        orig_sims = np.dot(batch_orig_norm, batch_orig_norm.T)
+        trans_sims = np.dot(batch_trans_norm, target_embeddings[i:end_i].T)
+
+        # Extract upper triangular part (excluding diagonal) to avoid duplicates
+        mask = np.triu(np.ones_like(orig_sims, dtype=bool), k=1)
+        all_orig_sims.extend(orig_sims[mask])
+        all_trans_sims.extend(trans_sims[mask])
+
+    # Compute correlation between original and translated similarities
+    if len(all_orig_sims) > 1:
+        correlation = np.corrcoef(all_orig_sims, all_trans_sims)[0, 1]
+        return correlation if not np.isnan(correlation) else 0.0
+    else:
+        return 0.0
+
+
+def compute_cycle_consistency_score(original_embeddings, cycled_embeddings):
+    """
+    Compute normalized cycle consistency score (0-1, higher is better).
+
+    This is a normalized version where 1.0 means perfect reconstruction.
+    """
+    # Compute L2 distances
+    diff = original_embeddings - cycled_embeddings
+    l2_distances = np.linalg.norm(diff, axis=1)
+
+    # Normalize by the magnitude of original embeddings
+    original_magnitudes = np.linalg.norm(original_embeddings, axis=1)
+
+    # Avoid division by zero
+    normalized_distances = np.where(
+        original_magnitudes > 1e-8,
+        l2_distances / original_magnitudes,
+        l2_distances
+    )
+
+    # Convert to similarity score (1.0 = perfect, 0.0 = worst)
+    # Using exponential decay: score = exp(-normalized_distance)
+    scores = np.exp(-normalized_distances)
+
+    return np.mean(scores)
